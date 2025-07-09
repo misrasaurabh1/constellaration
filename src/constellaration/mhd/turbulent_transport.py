@@ -81,8 +81,15 @@ def _set_up_surface_grid(
 
     See: https://github.com/PrincetonUniversity/STELLOPT/blob/develop/STELLOPTV2/Sources/General/stellopt_txport.f90#L258
     """
-    alpha_start = -(2.0 * np.pi) / n_field_periods / (1 + int(is_stellarator_symmetric))
-    alpha_end = (2.0 * np.pi) / n_field_periods / (1 + int(is_stellarator_symmetric))
-    alpha = np.linspace(alpha_start, alpha_end, settings.n_field_lines, endpoint=False)
+    # Precompute period divisor only once
+    period_divisor = n_field_periods * (1 + int(is_stellarator_symmetric))
+    two_pi_over_divisor = (2.0 * np.pi) / period_divisor
+
+    alpha = np.linspace(
+        -two_pi_over_divisor,
+        two_pi_over_divisor,
+        settings.n_field_lines,
+        endpoint=False,
+    )
     theta = np.linspace(-np.pi, np.pi, settings.n_toroidal_points, endpoint=False)
     return alpha, theta
