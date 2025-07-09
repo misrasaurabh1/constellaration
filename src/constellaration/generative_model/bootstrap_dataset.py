@@ -116,7 +116,8 @@ def _augment_dataset(
         """Flip theta sign."""
         z_sin = row["boundary"].z_sin  # type: ignore
         if z_sin[0, DATASET_MAX_TOROIDAL_MODE + 1] < 0:
-            row["boundary"] = row["boundary"].model_copy(update=dict(z_sin=-1 * z_sin))  # type: ignore
+            # Only update if needed, avoid extra copy
+            row["boundary"] = row["boundary"].model_copy(update=dict(z_sin=-z_sin))  # type: ignore
         return row  # type: ignore
 
     def _flip_modes(
@@ -142,14 +143,23 @@ def _augment_dataset(
         row["boundary"] = boundary.model_copy(update=dict(r_cos=r_cos, z_sin=z_sin))  # type: ignore
         return row
 
-    dframe = dframe.apply(_flip_z_sin_if_negative, axis=1)  # type: ignore
+    # Faster loop: pre-extract, operate, assign back only when needed.
+    boundaries = dframe["boundary"].values
+    flip_indices = [
+        i
+        for i, boundary in enumerate(boundaries)
+        if boundary.z_sin[0, DATASET_MAX_TOROIDAL_MODE + 1] < 0
+    ]
+    if flip_indices:
+        new_boundaries = boundaries.copy()
+        for i in flip_indices:
+            b = boundaries[i]
+            new_boundaries[i] = b.model_copy(update=dict(z_sin=-b.z_sin))
+        dframe = dframe.copy()
+        dframe["boundary"] = new_boundaries
 
-    return pd.concat(
-        [
-            dframe,
-        ],
-        axis=0,
-    ).reset_index(drop=True)
+    # pd.concat([dframe], axis=0) is a no-op; just .reset_index
+    return dframe.reset_index(drop=True)
 
 
 def _x_to_surface(
