@@ -424,12 +424,47 @@ def evaluate_dxyz_dtheta(
             theta.
         The last dimension indexes X, Y, and Z.
     """
-    dr_dtheta = _evaluate_dr_dtheta(surface, theta_phi)
-    dz_dtheta = _evaluate_dz_dtheta(surface, theta_phi)
+    # Compute all needed values in one go
+    angle = _compute_angle(surface, theta_phi)
+    poloidal_modes = surface.poloidal_modes
+
+    sin_angle = np.sin(angle)
+    cos_angle = np.cos(angle)
+
+    # Precompute dr_dtheta and dz_dtheta efficiently with minimal allocations
+    r_cos_weight = surface.r_cos * poloidal_modes * (-1)
+    dr_dtheta = np.tensordot(
+        sin_angle, r_cos_weight, axes=([angle.ndim - 2, angle.ndim - 1], [0, 1])
+    )
+
+    if not surface.is_stellarator_symmetric:
+        # Only evaluate r_sin if needed
+        assert surface.r_sin is not None
+        r_sin_weight = surface.r_sin * poloidal_modes
+        dr_dtheta += np.tensordot(
+            cos_angle, r_sin_weight, axes=([angle.ndim - 2, angle.ndim - 1], [0, 1])
+        )
+
+    z_sin_weight = surface.z_sin * poloidal_modes
+    dz_dtheta = np.tensordot(
+        cos_angle, z_sin_weight, axes=([angle.ndim - 2, angle.ndim - 1], [0, 1])
+    )
+
+    if not surface.is_stellarator_symmetric:
+        # Only evaluate z_cos if needed
+        assert surface.z_cos is not None
+        z_cos_weight = surface.z_cos * poloidal_modes * (-1)
+        dz_dtheta += np.tensordot(
+            sin_angle, z_cos_weight, axes=([angle.ndim - 2, angle.ndim - 1], [0, 1])
+        )
+
     phi = theta_phi[..., 1]
-    dx_dtheta = dr_dtheta * np.cos(phi)
-    dy_dtheta = dr_dtheta * np.sin(phi)
-    dz_dtheta = dz_dtheta
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    dx_dtheta = dr_dtheta * cos_phi
+    dy_dtheta = dr_dtheta * sin_phi
+
+    # Use np.stack to create the output array
     return np.stack((dx_dtheta, dy_dtheta, dz_dtheta), axis=-1)
 
 
