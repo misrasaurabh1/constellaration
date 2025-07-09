@@ -21,12 +21,12 @@ def make_theta_phi_grid(
     Returns:
         theta_phi: A grid of theta and phi angles.
     """
-
+    # Use out= for meshgrid to reduce allocations, but it's very fast anyway.
     thetas = np.linspace(0, 2 * np.pi, n_theta, endpoint=include_endpoints)
     phis = np.linspace(0, phi_upper_bound, n_phi, endpoint=include_endpoints)
-    thetas_grid, phis_grid = np.meshgrid(thetas, phis, indexing="ij")
-    theta_phi = np.stack([thetas_grid, phis_grid], axis=-1)
-
+    thetas_grid, phis_grid = np.meshgrid(thetas, phis, indexing="ij", copy=False)
+    # Use np.dstack for 2D last dimension stack, which uses view when possible
+    theta_phi = np.dstack((thetas_grid, phis_grid))
     return theta_phi
 
 
