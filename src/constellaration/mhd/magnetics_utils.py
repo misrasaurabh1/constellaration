@@ -8,7 +8,7 @@ from constellaration.mhd import vmec_utils
 def vacuum_well(
     equilibrium: vmec_utils.VmecppWOut,
 ) -> float:
-    r"""Computes a single number that summarizes the vacuum magnetic well, given by the
+    """Computes a single number that summarizes the vacuum magnetic well, given by the
     formula.
 
     This function reproduces the `vacuum_well` function in Simsopt.
@@ -27,13 +27,16 @@ def vacuum_well(
     for :math:`W`.
     """
 
-    # gmnc are the Fourier coefficients of the Jacobian in VMEC coordinates.
-    # In VMEC, the radial derivative of the volume is (2pi)^2 * |g^{1/2}|.
-    d_volume_d_s = 4 * np.pi * np.pi * np.abs(equilibrium.gmnc[:, 0])
+    # The only gmnc values we need are for index 0, 1, -2, and -1 for n=0 mode ([:, 0])
+    pi2 = np.pi**2
+    # Use only the indices needed for linear extrapolation
+    g0 = abs(equilibrium.gmnc[0, 0])
+    g1 = abs(equilibrium.gmnc[1, 0])
+    g_endm1 = abs(equilibrium.gmnc[-2, 0])
+    g_end = abs(equilibrium.gmnc[-1, 0])
 
-    # Extrapolate linearly to the magnetic axis and the LCFS.
-    d_volume_d_s_at_magnetic_axis = 1.5 * d_volume_d_s[0] - 0.5 * d_volume_d_s[1]
-    d_volume_d_s_at_lcfs = 1.5 * d_volume_d_s[-1] - 0.5 * d_volume_d_s[-2]
+    d_volume_d_s_at_magnetic_axis = 4 * pi2 * (1.5 * g0 - 0.5 * g1)
+    d_volume_d_s_at_lcfs = 4 * pi2 * (1.5 * g_end - 0.5 * g_endm1)
 
     return (
         d_volume_d_s_at_magnetic_axis - d_volume_d_s_at_lcfs
