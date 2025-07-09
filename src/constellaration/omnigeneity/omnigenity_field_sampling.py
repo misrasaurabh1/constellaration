@@ -70,17 +70,23 @@ class SampleMagneticWellBetaCDFSettings(pydantic.BaseModel):
         """
         rng = np.random.default_rng(seed)
 
-        # Check if we need to sample the parameters or if they are provided
-        betas = betas or rng.uniform(self.beta_min, self.beta_max, n_samples).tolist()
-        alphas = (
-            alphas or rng.uniform(self.alpha_min, self.alpha_max, n_samples).tolist()
-        )
-        mirror_ratios = (
-            mirror_ratios
-            or rng.uniform(
+        # Generate parameters if not provided (always produce np arrays for vectorization)
+        if betas is None:
+            betas = rng.uniform(self.beta_min, self.beta_max, n_samples)
+        else:
+            betas = np.asarray(betas, dtype=np.float64)
+
+        if alphas is None:
+            alphas = rng.uniform(self.alpha_min, self.alpha_max, n_samples)
+        else:
+            alphas = np.asarray(alphas, dtype=np.float64)
+
+        if mirror_ratios is None:
+            mirror_ratios = rng.uniform(
                 self.mirror_ratio_min, self.mirror_ratio_max, n_samples
-            ).tolist()
-        )
+            )
+        else:
+            mirror_ratios = np.asarray(mirror_ratios, dtype=np.float64)
 
         assert betas is not None
         assert alphas is not None
@@ -91,30 +97,31 @@ class SampleMagneticWellBetaCDFSettings(pydantic.BaseModel):
             f"Got {len(betas)}, {len(alphas)} and {len(mirror_ratios)}."
         )
 
+        # Vectorized CDF calculation for all curves at once
         x = np.linspace(0, 1, self.n_points_per_curve, endpoint=True)
 
-        def _sample_curve(
-            alpha: float, beta: float, mirror_ratio: float
-        ) -> list[float]:
-            """Gets the CDF of the beta distribution and scales it to a range with a
-            target mean and mirror ratio."""
-            cdf = scipy_stats.beta.cdf(x, alpha, beta)
-            f_min = np.min(cdf)
-            f_max = np.max(cdf)
-            f_mean = np.mean(cdf)
+        # We use broadcasting to create (n_samples, n_points_per_curve) arrays
+        # Note: scipy.stats.beta.cdf supports array-valued a, b with extra broadcasting dims since v1.0
+        cdf = scipy_stats.beta.cdf(
+            x[None, :],  # Shape (1, n_points)
+            alphas[:, None],  # (n_samples, 1)
+            betas[:, None],  # (n_samples, 1)
+        )  # shape is (n_samples, n_points_per_curve)
 
-            denom = (f_max - f_min) - mirror_ratio * ((f_max + f_min) - 2 * f_mean)
-            scale = 2 * mirror_ratio * self.mean_modb / denom
-            bias = self.mean_modb - scale * f_mean
+        f_min = np.min(cdf, axis=1, keepdims=True)
+        f_max = np.max(cdf, axis=1, keepdims=True)
+        f_mean = np.mean(cdf, axis=1, keepdims=True)
 
-            modb = scale * cdf + bias
+        # Compute denom, scale, and bias for all curves at once
+        sum_fmax_min = f_max + f_min
+        denom = (f_max - f_min) - mirror_ratios[:, None] * (sum_fmax_min - 2 * f_mean)
+        scale = 2 * mirror_ratios[:, None] * self.mean_modb / denom
+        bias = self.mean_modb - scale * f_mean
 
-            return modb.tolist()
+        modb = scale * cdf + bias  # shape (n_samples, n_points_per_curve)
 
-        return [
-            _sample_curve(alpha, beta, mirror_ratio)
-            for alpha, beta, mirror_ratio in zip(alphas, betas, mirror_ratios)
-        ]
+        # Convert to list[list[float]] for compatibility
+        return modb.tolist()
 
 
 class SampleStellaratorSymmetricOmnigenousFieldSetting(pydantic.BaseModel):
