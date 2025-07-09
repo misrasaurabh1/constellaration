@@ -369,14 +369,22 @@ def evaluate_points_rz(
     angle = _compute_angle(surface, theta_phi)
     cos_angle = np.cos(angle)
     sin_angle = np.sin(angle)
-    # r_cos is (n_poloidal_modes, n_toroidal_modes)
-    r = np.sum(surface.r_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
-    z = np.sum(surface.z_sin[np.newaxis, :, :] * sin_angle, axis=(-1, -2))
+
+    # Outermost shape: theta_phi[..., 0].shape == *dims
+    # (let's call this batch_shape)
+    # surface.r_cos: (n_poloidal_modes, n_toroidal_modes)
+    # cos_angle: (*batch_shape, n_poloidal_modes, n_toroidal_modes)
+
+    # Compute R and Z contributions via einsum for efficiency
+    r = np.einsum("...ij,ij->...", cos_angle, surface.r_cos)
+    z = np.einsum("...ij,ij->...", sin_angle, surface.z_sin)
+
     if not surface.is_stellarator_symmetric:
         assert surface.r_sin is not None
         assert surface.z_cos is not None
-        r += np.sum(surface.r_sin[np.newaxis, :, :] * sin_angle, axis=(-1, -2))
-        z += np.sum(surface.z_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
+        r += np.einsum("...ij,ij->...", sin_angle, surface.r_sin)
+        z += np.einsum("...ij,ij->...", cos_angle, surface.z_cos)
+
     return np.stack((r, z), axis=-1)
 
 
@@ -738,11 +746,17 @@ def _compute_angle(
 ) -> jt.Float[np.ndarray, "*dims n_poloidal_modes n_toroidal_modes"]:
     # angle is the argument of sin and cos in the Fourier series
     # angle = m*theta - NFP*n*phi
-    angle: jt.Float[np.ndarray, "*dims n_poloidal_modes n_toroidal_modes"] = (
-        surface.poloidal_modes * theta_phi[..., 0][..., np.newaxis, np.newaxis]
-        - surface.n_field_periods
-        * surface.toroidal_modes
-        * theta_phi[..., 1][..., np.newaxis, np.newaxis]
+
+    # theta_phi[..., 0] = theta, theta_phi[..., 1] = phi
+    # poloidal_modes: (n_poloidal_modes, n_toroidal_modes)
+    # toroidal_modes: (n_poloidal_modes, n_toroidal_modes)
+    # Expand dims for broadcasting
+
+    theta = theta_phi[..., 0][..., np.newaxis, np.newaxis]
+    phi = theta_phi[..., 1][..., np.newaxis, np.newaxis]
+    angle = (
+        surface.poloidal_modes * theta
+        - surface.n_field_periods * surface.toroidal_modes * phi
     )
     return angle
 
