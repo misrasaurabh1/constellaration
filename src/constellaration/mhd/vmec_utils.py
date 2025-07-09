@@ -149,8 +149,9 @@ class VmecppWOut(pydantic_numpy.BaseModelWithNumpy):
     def check_bdotb(
         cls, bdotb: jt.Float[np.ndarray, "..."] | None
     ) -> jt.Float[np.ndarray, "..."]:
+        # Use cached static empty array for efficiency
         if bdotb is None:
-            return np.array([])
+            return _EMPTY_ARRAY
         return bdotb
 
     @property
@@ -428,3 +429,6 @@ def _inverse_fourier_transform(
         return np.sum(fourier_coefficients * np.cos(angle), axis=-1)
     elif basis == _FourierBasis.SINE:
         return np.sum(fourier_coefficients * np.sin(angle), axis=-1)
+
+
+_EMPTY_ARRAY = np.array([])
