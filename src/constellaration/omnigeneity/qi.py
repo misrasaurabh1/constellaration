@@ -221,10 +221,13 @@ def quasi_isodynamicity_residual(
 
 def _squash_left_side(modb: np.ndarray) -> np.ndarray:
     """Squash the left side of the magnetic well."""
-    modb = modb.copy()
     modb_max_index = np.argmax(modb)
-    modb[:modb_max_index] = modb[modb_max_index]
-    return np.minimum.accumulate(modb)
+    # Create result array so as not to modify input (guaranteed output is a copy)
+    result = modb.copy()
+    if modb_max_index > 0:
+        result[:modb_max_index] = result[modb_max_index]
+    np.minimum.accumulate(result, out=result)
+    return result
 
 
 def _squash_right_side(modb: np.ndarray) -> np.ndarray:
