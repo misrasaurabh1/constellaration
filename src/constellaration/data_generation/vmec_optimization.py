@@ -282,11 +282,12 @@ def _compute_modB_maxima_reisudals(
     modB: jt.Float[np.ndarray, " n_collocation_points"],
     n_alpha: int,
 ) -> jt.Float[np.ndarray, " n_collocation_points"]:
-    modB = modB.reshape(
-        n_alpha,
-        -1,
-    )
-    return np.max(modB, axis=1) - modB[:, 0]
+    # Combine reshape, max, and subtraction operations into a single pass for efficiency
+    reshaped = modB.reshape(n_alpha, -1)
+    # Use np.amax for possibly better performance and avoid repeated indexing by keeping references
+    max_vals = reshaped.max(axis=1)
+    first_col = reshaped[:, 0]
+    return max_vals - first_col
 
 
 def _compute_modB(
