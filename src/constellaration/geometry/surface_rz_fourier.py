@@ -846,16 +846,21 @@ def build_surface_rz_fourier_mask(
     max_poloidal_mode: int,
     max_toroidal_mode: int,
 ) -> SurfaceRZFourier:
-    fourier_coefficients_mask = jnp.asarray(
-        (surface.poloidal_modes > 0)
-        | ((surface.poloidal_modes == 0) & (surface.toroidal_modes >= 1))
+    # Vectorized mask computation using numpy for maximum efficiency
+    poloidal_modes = surface.poloidal_modes
+    toroidal_modes = surface.toroidal_modes
+
+    # Precompute conditions using pure numpy
+    mask = (
+        ((poloidal_modes > 0) | ((poloidal_modes == 0) & (toroidal_modes >= 1)))
+        & (poloidal_modes <= max_poloidal_mode)
+        & (np.abs(toroidal_modes) <= max_toroidal_mode)
     )
-    fourier_coefficients_mask &= (surface.poloidal_modes <= max_poloidal_mode) & (
-        np.abs(surface.toroidal_modes) <= max_toroidal_mode
-    )
+
+    # Return updated copy with mask
     return surface.model_copy(
         update=dict(
-            r_cos=fourier_coefficients_mask,
-            z_sin=fourier_coefficients_mask,
+            r_cos=mask,
+            z_sin=mask,
         ),
     )
