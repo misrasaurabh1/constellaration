@@ -220,6 +220,7 @@ def get_largest_non_zero_modes(
         surface: The surface to trim.
         tolerance: The tolerance for considering a coefficient as zero.
     """
+    # Gather coefficient arrays efficiently
     coeff_arrays = [surface.r_cos, surface.z_sin]
     if surface.r_sin is not None:
         coeff_arrays.append(surface.r_sin)
@@ -228,21 +229,28 @@ def get_largest_non_zero_modes(
 
     max_m = 0
     max_n = 0
+    ntor = surface.max_toroidal_mode
 
     for coeff in coeff_arrays:
-        non_zero = np.abs(coeff) > tolerance
-        if not np.any(non_zero):
+        # Avoid allocations: compute non-zero mask row/col maxima only if needed
+        abs_coeff = np.abs(coeff)
+        mask = abs_coeff > tolerance
+        if not np.any(mask):
             continue
-        m_indices, n_indices = np.nonzero(non_zero)
-        # Toroidal modes are stored as [-ntor, ..., 0, ..., ntor]
-        # Shift n_indices such that it is the largest toroidal mode
-        n_indices -= surface.max_toroidal_mode
-        current_max_m = m_indices.max()
-        current_max_n = n_indices.max()
-        if current_max_m > max_m:
-            max_m = current_max_m
-        if current_max_n > max_n:
-            max_n = current_max_n
+        # Fastest: get only the indices we need without explicit np.nonzero/mgrid
+        m_index = np.where(mask.any(axis=1))[0]
+        n_index = np.where(mask.any(axis=0))[0]
+        if m_index.size > 0:
+            current_max_m = m_index.max()
+            if current_max_m > max_m:
+                max_m = current_max_m
+        if n_index.size > 0:
+            # Toroidal modes are stored as [-ntor, ..., 0, ..., ntor]
+            # Shift n_index such that it is the largest toroidal mode
+            # The first axis is poloidal (m), the second axis is toroidal (n)
+            current_max_n = (n_index - ntor).max()
+            if current_max_n > max_n:
+                max_n = current_max_n
 
     # Ensure at least one mode is retained
     return max(max_m, 0), max(max_n, 0)
