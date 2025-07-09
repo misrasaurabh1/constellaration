@@ -138,9 +138,7 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
 
     _average_triangularity_upper_bound: float = -0.5
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.3
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.3
 
     _does_it_require_qi: bool = False
 
@@ -213,9 +211,7 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
 
     _aspect_ratio_upper_bound: pydantic.PositiveFloat = 10.0
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -4.0
 
@@ -240,28 +236,43 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
     def _normalized_constraint_violations(
         self, metrics: forward_model.ConstellarationMetrics
     ) -> np.ndarray:
-        assert metrics.qi is not None
-        constraint_violations = np.array(
-            [
-                metrics.aspect_ratio - self._aspect_ratio_upper_bound,
-                self._edge_rotational_transform_over_n_field_periods_lower_bound
-                - metrics.edge_rotational_transform_over_n_field_periods,
-                np.log10(metrics.qi) - self._log10_qi_upper_bound,
-                metrics.edge_magnetic_mirror_ratio
-                - self._edge_magnetic_mirror_ratio_upper_bound,
-                metrics.max_elongation - self._max_elongation_upper_bound,
-            ]
-        )
-        constraint_targets = np.array(
-            [
-                self._aspect_ratio_upper_bound,
-                self._edge_rotational_transform_over_n_field_periods_lower_bound,
-                self._log10_qi_upper_bound,
-                self._edge_magnetic_mirror_ratio_upper_bound,
-                self._max_elongation_upper_bound,
-            ]
-        )
-        return constraint_violations / np.abs(constraint_targets)
+        # Use local variables to minimize repeated attribute lookups
+        aspect_ratio_ub = self._aspect_ratio_upper_bound
+        rot_tr_ub = self._edge_rotational_transform_over_n_field_periods_lower_bound
+        log10_qi_ub = self._log10_qi_upper_bound
+        mirror_ratio_ub = self._edge_magnetic_mirror_ratio_upper_bound
+        elong_ub = self._max_elongation_upper_bound
+
+        # Read all metric fields used (single indirection each, no wasted object derefs)
+        ar = metrics.aspect_ratio
+        ert = metrics.edge_rotational_transform_over_n_field_periods
+        qi_val = metrics.qi
+        emmr = metrics.edge_magnetic_mirror_ratio
+        melong = metrics.max_elongation
+
+        # Ensure qi is not None
+        assert qi_val is not None
+
+        # For fixed-length 5, use np.array for return compatibility
+        violations = np.empty(5, dtype=np.float64)
+        targets = np.empty(5, dtype=np.float64)
+        violations[0] = ar - aspect_ratio_ub
+        targets[0] = aspect_ratio_ub
+
+        violations[1] = rot_tr_ub - ert
+        targets[1] = rot_tr_ub
+
+        violations[2] = np.log10(qi_val) - log10_qi_ub
+        targets[2] = log10_qi_ub
+
+        violations[3] = emmr - mirror_ratio_ub
+        targets[3] = mirror_ratio_ub
+
+        violations[4] = melong - elong_ub
+        targets[4] = elong_ub
+
+        # Elementwise division using vectorized NumPy operation
+        return violations / np.abs(targets)
 
 
 class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
@@ -301,17 +312,13 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
         vacuum_well_lower_bound: Minimum required vacuum well.
     """
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -3.5
 
     _edge_magnetic_mirror_ratio_upper_bound: pydantic.PositiveFloat = 0.25
 
-    _flux_compression_in_regions_of_bad_curvature_upper_bound: (
-        pydantic.PositiveFloat
-    ) = 0.9
+    _flux_compression_in_regions_of_bad_curvature_upper_bound: pydantic.PositiveFloat = 0.9
 
     _vacuum_well_lower_bound: pydantic.NonNegativeFloat = 0.0
 
