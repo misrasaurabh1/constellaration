@@ -687,40 +687,39 @@ def boundary_from_named_modes(
     Returns:
         A SurfaceRZFourier object reconstructed from the named Fourier modes.
     """
-    # Extract maximum poloidal and toroidal mode indices from the keys
-    max_m = max(int(key.split("(")[1].split(",")[0]) for key in named_fourier_modes)
-    max_n = max(
-        abs(int(key.split("(")[1].split(",")[1][:-1])) for key in named_fourier_modes
-    )
+    # First, do a single pass to find max |m| and max |n|
+    max_m = -1
+    max_abs_n = -1
+    parsed_modes = []
+    for key in named_fourier_modes:
+        mode_type, m, n = _parse_named_mode_key(key)
+        if m > max_m:
+            max_m = m
+        abs_n = abs(n)
+        if abs_n > max_abs_n:
+            max_abs_n = abs_n
+        parsed_modes.append((mode_type, m, n, key))
 
-    # Initialize Fourier coefficient arrays
-    r_cos = np.zeros((max_m + 1, 2 * max_n + 1))
-    z_sin = np.zeros((max_m + 1, 2 * max_n + 1))
-    r_sin = None
-    z_cos = None
-
+    shape = (max_m + 1, 2 * max_abs_n + 1)
+    r_cos = np.zeros(shape)
+    z_sin = np.zeros(shape)
+    r_sin = z_cos = None
     if not is_stellarator_symmetric:
-        r_sin = np.zeros((max_m + 1, 2 * max_n + 1))
-        z_cos = np.zeros((max_m + 1, 2 * max_n + 1))
+        r_sin = np.zeros(shape)
+        z_cos = np.zeros(shape)
 
-    # Populate Fourier coefficient arrays
-    for key, value in named_fourier_modes.items():
-        mode_type, indices = key.split("(")
-        m, n = map(int, indices[:-1].split(","))
-        n_shifted = n + max_n  # Adjust n index to match array dimensions
-
+    n_shift = max_abs_n
+    for mode_type, m, n, key in parsed_modes:
+        value = named_fourier_modes[key]
+        n_idx = n + n_shift  # shift so indices go from 0 to 2*max_abs_n
         if mode_type == "r_cos":
-            r_cos[m, n_shifted] = value
+            r_cos[m, n_idx] = value
         elif mode_type == "z_sin":
-            z_sin[m, n_shifted] = value
-        elif (
-            mode_type == "r_sin" and not is_stellarator_symmetric and r_sin is not None
-        ):
-            r_sin[m, n_shifted] = value
-        elif (
-            mode_type == "z_cos" and not is_stellarator_symmetric and z_cos is not None
-        ):
-            z_cos[m, n_shifted] = value
+            z_sin[m, n_idx] = value
+        elif mode_type == "r_sin" and r_sin is not None:
+            r_sin[m, n_idx] = value
+        elif mode_type == "z_cos" and z_cos is not None:
+            z_cos[m, n_idx] = value
 
     return SurfaceRZFourier(
         r_cos=r_cos,
@@ -859,3 +858,11 @@ def build_surface_rz_fourier_mask(
             z_sin=fourier_coefficients_mask,
         ),
     )
+
+
+def _parse_named_mode_key(key):
+    # Example key: 'r_cos(2, -1)'
+    # Returns: mode_type, m, n
+    mode_type, rest = key.split("(", 1)
+    m_str, n_str = rest[:-1].split(",")  # remove last ')', split by ','
+    return mode_type, int(m_str), int(n_str)
