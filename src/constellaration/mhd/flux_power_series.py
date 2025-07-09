@@ -29,22 +29,20 @@ def evaluate_at_normalized_effective_radius(
     profile: FluxPowerSeriesProfile,
     normalized_effective_radius: jt.Float[NpOrJaxArray, " n_points"],
 ) -> jt.Float[NpOrJaxArray, " n_points"]:
-    return evaluate_at_normalized_toroidal_flux(
-        profile, normalized_effective_radius**2
-    )
+    return evaluate_at_normalized_toroidal_flux(profile, normalized_effective_radius**2)
 
 
 def evaluate_at_normalized_toroidal_flux(
     profile: FluxPowerSeriesProfile,
     normalized_toroidal_flux: jt.Float[NpOrJaxArray, " n_points"],
 ) -> jt.Float[NpOrJaxArray, " n_points"]:
-    return np.sum(
-        [
-            a_n * normalized_toroidal_flux**n
-            for n, a_n in enumerate(profile.coefficients)
-        ],
-        axis=0,
-    )
+    # Vectorized evaluation using Horner's method
+    coeffs = profile.coefficients
+    result = np.zeros_like(normalized_toroidal_flux)
+    # Use Horner's method: more stable and faster
+    for a_n in reversed(coeffs):
+        result = result * normalized_toroidal_flux + a_n
+    return result
 
 
 def _evaluate_nth_derivative(
