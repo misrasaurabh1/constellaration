@@ -294,8 +294,15 @@ def _compute_modB(
     theta: jt.Float[np.ndarray, " n_collocation_points"],
     phi: jt.Float[np.ndarray, " n_collocation_points"],
 ) -> jt.Float[np.ndarray, " n_collocation_points"]:
-    angle = boozer.xm_b[:, None] * theta[None, :] - boozer.xn_b[:, None] * phi[None, :]
-    return np.sum(boozer.bmnc_b[:, 0][:, None] * np.cos(angle), axis=0)
+    # Precompute
+    xm = boozer.xm_b
+    xn = boozer.xn_b
+    bm = boozer.bmnc_b[:, 0]
+    # np.outer is more cache-friendly here than manual broadcasting
+    angle = np.outer(xm, theta) - np.outer(xn, phi)
+    # Use einsum to sum the multiplication with cos(angle)
+    # This avoids allocating the full (m, n) intermediate array unnecessarily
+    return np.einsum("i,ij->j", bm, np.cos(angle))
 
 
 def _get_n_logical_cores() -> int:
