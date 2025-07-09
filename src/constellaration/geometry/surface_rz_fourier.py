@@ -293,33 +293,36 @@ def compute_mean_cross_sectional_area(
         n_phi: Number of quadrature points in the phi dimension of the surface,
             used for the numerical integration.
     """
-    # n_theta - 1, n_phi - 1 is to make sure this calculation is equivalent to using
-    # Simsopt
+    # n_theta - 1, n_phi - 1 is to match Simsopt convention
     theta_phi_grid = surface_utils.make_theta_phi_grid(
         n_theta - 1, n_phi - 1, phi_upper_bound=2 * np.pi, include_endpoints=False
     )
     xyz = evaluate_points_xyz(surface, theta_phi_grid)
-    x2y2 = xyz[:, :, 0] ** 2 + xyz[:, :, 1] ** 2
-    dgamma1 = evaluate_dxyz_dphi(surface, theta_phi_grid) * 2 * np.pi
-    dgamma2 = evaluate_dxyz_dtheta(surface, theta_phi_grid) * 2 * np.pi
+    x = xyz[:, :, 0]
+    y = xyz[:, :, 1]
+    z = xyz[:, :, 2]
+    x2y2 = x * x + y * y
+    dgamma1 = evaluate_dxyz_dphi(surface, theta_phi_grid)
+    dgamma2 = evaluate_dxyz_dtheta(surface, theta_phi_grid)
+    # Multiply by 2*pi in-place to avoid temporaries
+    dgamma1 *= 2 * np.pi
+    dgamma2 *= 2 * np.pi
 
-    # compute the average cross sectional area
-    J = np.zeros((xyz.shape[0], xyz.shape[1], 2, 2))
-    J[:, :, 0, 0] = (
-        xyz[:, :, 0] * dgamma1[:, :, 1] - xyz[:, :, 1] * dgamma1[:, :, 0]
-    ) / x2y2
-    J[:, :, 0, 1] = (
-        xyz[:, :, 0] * dgamma2[:, :, 1] - xyz[:, :, 1] * dgamma2[:, :, 0]
-    ) / x2y2
-    J[:, :, 1, 0] = 0.0
-    J[:, :, 1, 1] = 1.0
-
-    detJ = np.linalg.det(J)
-    Jinv = np.linalg.inv(J)
-
-    dZ_dtheta = (
-        dgamma1[:, :, 2] * Jinv[:, :, 0, 1] + dgamma2[:, :, 2] * Jinv[:, :, 1, 1]
-    )
+    # Efficient jacobian (J) setup with broadcasting, no zero-initialization needed
+    # Only J[:, :, 0, 0] and J[:, :, 0, 1] are not constant
+    J00 = (x * dgamma1[:, :, 1] - y * dgamma1[:, :, 0]) / x2y2
+    J01 = (x * dgamma2[:, :, 1] - y * dgamma2[:, :, 0]) / x2y2
+    # Det is simply J00 * 1.0 - 0.0*J01 = J00
+    detJ = J00
+    # Efficiently build 2x2 identity and off-diagonal array for Jinv
+    # J = [[J00, J01],[0,1]] -> inv(J) = [[1/J00, -J01/J00],[0,1]]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        invJ00 = 1.0 / J00  # shape (n_theta, n_phi)
+        invJ10 = np.zeros_like(invJ00)
+        invJ01 = -J01 / J00
+        invJ11 = np.ones_like(invJ00)
+    # dZ_dtheta = dgamma1_z * Jinv[0, 1] + dgamma2_z * Jinv[1, 1]
+    dZ_dtheta = dgamma1[:, :, 2] * invJ01 + dgamma2[:, :, 2] * invJ11
     mean_cross_sectional_area = np.abs(np.mean(np.sqrt(x2y2) * dZ_dtheta * detJ)) / (
         2 * np.pi
     )
@@ -343,11 +346,19 @@ def evaluate_points_xyz(
         The last dimension indexes X, Y, and Z.
     """
     rz = evaluate_points_rz(surface, theta_phi)
-    phi = theta_phi[..., 1]
-    x = rz[..., 0] * np.cos(phi)
-    y = rz[..., 0] * np.sin(phi)
+    r = rz[..., 0]
     z = rz[..., 1]
-    return np.stack((x, y, z), axis=-1)
+    phi = theta_phi[..., 1]
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    x = r * cos_phi
+    y = r * sin_phi
+    # Use np.empty+ assignment to avoid stack overhead if very large array
+    out = np.empty(rz.shape[:-1] + (3,), dtype=rz.dtype)
+    out[..., 0] = x
+    out[..., 1] = y
+    out[..., 2] = z
+    return out
 
 
 def evaluate_points_rz(
@@ -398,14 +409,20 @@ def evaluate_dxyz_dphi(
             phi.
         The last dimension indexes X, Y, and Z.
     """
-    r = evaluate_points_rz(surface, theta_phi)[..., 0]
+    rz = evaluate_points_rz(surface, theta_phi)
+    r = rz[..., 0]
+    phi = theta_phi[..., 1]
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
     dr_dphi = _evaluate_dr_dphi(surface, theta_phi)
     dz_dphi = _evaluate_dz_dphi(surface, theta_phi)
-    phi = theta_phi[..., 1]
-    dx_dphi = dr_dphi * np.cos(phi) - r * np.sin(phi)
-    dy_dphi = dr_dphi * np.sin(phi) + r * np.cos(phi)
-    dz_dphi = dz_dphi
-    return np.stack((dx_dphi, dy_dphi, dz_dphi), axis=-1)
+    dx_dphi = dr_dphi * cos_phi - r * sin_phi
+    dy_dphi = dr_dphi * sin_phi + r * cos_phi
+    out = np.empty(r.shape + (3,), dtype=r.dtype)
+    out[..., 0] = dx_dphi
+    out[..., 1] = dy_dphi
+    out[..., 2] = dz_dphi
+    return out
 
 
 def evaluate_dxyz_dtheta(
@@ -427,10 +444,15 @@ def evaluate_dxyz_dtheta(
     dr_dtheta = _evaluate_dr_dtheta(surface, theta_phi)
     dz_dtheta = _evaluate_dz_dtheta(surface, theta_phi)
     phi = theta_phi[..., 1]
-    dx_dtheta = dr_dtheta * np.cos(phi)
-    dy_dtheta = dr_dtheta * np.sin(phi)
-    dz_dtheta = dz_dtheta
-    return np.stack((dx_dtheta, dy_dtheta, dz_dtheta), axis=-1)
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    dx_dtheta = dr_dtheta * cos_phi
+    dy_dtheta = dr_dtheta * sin_phi
+    out = np.empty(dr_dtheta.shape + (3,), dtype=dr_dtheta.dtype)
+    out[..., 0] = dx_dtheta
+    out[..., 1] = dy_dtheta
+    out[..., 2] = dz_dtheta
+    return out
 
 
 def set_max_mode_numbers(
