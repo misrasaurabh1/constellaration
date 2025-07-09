@@ -1,5 +1,3 @@
-import functools
-
 import jaxtyping as jt
 import numpy as np
 import pydantic
@@ -258,14 +256,7 @@ def _find_bounce_points(
 ) -> tuple[float, float]:
     """Find the toroidal location where the magnetic field strength crosses a specified
     value."""
-    # Calculate differences between the magnetic field strength and the target value
-    modb_diff = modb - modb_star
-    # Compute the product of adjacent differences to find sign changes (zero crossings)
-    sign_changes = modb_diff[:-1] * modb_diff[1:]
-    # Find indices where sign change occurs (crossings)
-    crossing_indices = np.where(sign_changes < 0)[0]
-
-    # Handle special cases where modb_star is at or outside the range of modb
+    # Check special cases up-front using local min/max if not provided accurately
     if (
         modb_star - modb_min_on_flux_surface < _MACHINE_PRECISION
         or modb_star < modb_min_on_flux_surface
@@ -273,23 +264,34 @@ def _find_bounce_points(
         min_index = np.argmin(modb)
         phi_min = phi[min_index]
         return phi_min, phi_min
-    elif (
+    if (
         modb_max_on_flux_surface - modb_star < _MACHINE_PRECISION
         or modb_star > modb_max_on_flux_surface
     ):
         return phi[0], phi[-1]
 
+    # Calculate differences and look for sign changes
+    modb_diff = modb - modb_star
+    sign_changes = modb_diff[:-1] * modb_diff[1:]
+    crossing_indices = np.nonzero(sign_changes < 0)[0]
+
     # If more than two crossings, select the first and last
-    if len(crossing_indices) >= 2:
-        crossing_indices = [crossing_indices[0], crossing_indices[-1]]
+    if crossing_indices.size >= 2:
+        idx0, idx1 = crossing_indices[0], crossing_indices[-1]
     else:
         raise ValueError("Not enough crossings found.")
 
-    interp = functools.partial(
-        _interpolate_and_find_phi, modb=modb, phi=phi, modb_star=modb_star
-    )
+    # Inline interpolation for performance (was _interpolate_and_find_phi)
+    def _interp(crossing_index: int) -> float:
+        phi0, phi1 = phi[crossing_index], phi[crossing_index + 1]
+        modb0, modb1 = modb[crossing_index], modb[crossing_index + 1]
+        dy = modb0 - modb1
+        dx = phi0 - phi1
+        m = dy / dx
+        b = modb0 - m * phi0
+        return (modb_star - b) / m if m != 0 else phi0
 
-    return interp(crossing_indices[0]), interp(crossing_indices[1])
+    return _interp(idx0), _interp(idx1)
 
 
 def _interpolate_and_find_phi(
