@@ -344,10 +344,18 @@ def evaluate_points_xyz(
     """
     rz = evaluate_points_rz(surface, theta_phi)
     phi = theta_phi[..., 1]
-    x = rz[..., 0] * np.cos(phi)
-    y = rz[..., 0] * np.sin(phi)
+    cphi = np.cos(phi)
+    sphi = np.sin(phi)
+    r = rz[..., 0]
+    x = r * cphi
+    y = r * sphi
     z = rz[..., 1]
-    return np.stack((x, y, z), axis=-1)
+    # Pre-allocate output for improved stacking performance
+    out = np.empty(rz.shape[:-1] + (3,), dtype=rz.dtype)
+    out[..., 0] = x
+    out[..., 1] = y
+    out[..., 2] = z
+    return out
 
 
 def evaluate_points_rz(
@@ -369,15 +377,22 @@ def evaluate_points_rz(
     angle = _compute_angle(surface, theta_phi)
     cos_angle = np.cos(angle)
     sin_angle = np.sin(angle)
-    # r_cos is (n_poloidal_modes, n_toroidal_modes)
-    r = np.sum(surface.r_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
-    z = np.sum(surface.z_sin[np.newaxis, :, :] * sin_angle, axis=(-1, -2))
+
+    # Use einsum to reduce memory and broadcasting overhead
+    r = np.einsum("...mn,mn->...", cos_angle, surface.r_cos)
+    z = np.einsum("...mn,mn->...", sin_angle, surface.z_sin)
+
     if not surface.is_stellarator_symmetric:
         assert surface.r_sin is not None
         assert surface.z_cos is not None
-        r += np.sum(surface.r_sin[np.newaxis, :, :] * sin_angle, axis=(-1, -2))
-        z += np.sum(surface.z_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
-    return np.stack((r, z), axis=-1)
+        r += np.einsum("...mn,mn->...", sin_angle, surface.r_sin)
+        z += np.einsum("...mn,mn->...", cos_angle, surface.z_cos)
+
+    # Pre-allocate output for improved stacking performance
+    out = np.empty(r.shape + (2,), dtype=r.dtype)
+    out[..., 0] = r
+    out[..., 1] = z
+    return out
 
 
 def evaluate_dxyz_dphi(
