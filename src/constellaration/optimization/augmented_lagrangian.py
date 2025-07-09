@@ -49,18 +49,13 @@ def augmented_lagrangian_function(
     Returns:
         Updated augmented Lagrangian state.
     """
-    value = objective + jnp.sum(
-        0.5
-        * state.penalty_parameters
-        * (
-            jnp.maximum(
-                0.0,
-                state.multipliers / state.penalty_parameters + constraints,
-            )
-            ** 2
-            - (state.multipliers / state.penalty_parameters) ** 2
-        )
-    )
+    # Precompute multiplier / penalty to avoid redundant computation
+    div = state.multipliers / state.penalty_parameters
+    # Precompute only once
+    max_term = jnp.maximum(0.0, div + constraints)
+    diff = max_term - div
+    # Pull out the ^2, and multiply penalty out of sum for fusion
+    value = objective + 0.5 * jnp.sum(state.penalty_parameters * diff * diff)
     return value
 
 
