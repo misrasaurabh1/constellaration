@@ -30,7 +30,9 @@ class _Problem(abc.ABC):
         normalized_constraint_violations = self._normalized_constraint_violations(
             metrics
         )
-        return float(np.max(np.maximum(normalized_constraint_violations, 0.0)))
+        # Fastest way: take the max value, only allocate one float rather than a new array
+        max_violation = np.max(normalized_constraint_violations)
+        return float(max(0.0, max_violation))
 
     @abc.abstractmethod
     def _normalized_constraint_violations(
@@ -138,9 +140,7 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
 
     _average_triangularity_upper_bound: float = -0.5
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.3
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.3
 
     _does_it_require_qi: bool = False
 
@@ -213,9 +213,7 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
 
     _aspect_ratio_upper_bound: pydantic.PositiveFloat = 10.0
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -4.0
 
@@ -301,17 +299,13 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
         vacuum_well_lower_bound: Minimum required vacuum well.
     """
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -3.5
 
     _edge_magnetic_mirror_ratio_upper_bound: pydantic.PositiveFloat = 0.25
 
-    _flux_compression_in_regions_of_bad_curvature_upper_bound: (
-        pydantic.PositiveFloat
-    ) = 0.9
+    _flux_compression_in_regions_of_bad_curvature_upper_bound: pydantic.PositiveFloat = 0.9
 
     _vacuum_well_lower_bound: pydantic.NonNegativeFloat = 0.0
 
