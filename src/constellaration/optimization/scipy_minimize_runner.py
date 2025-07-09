@@ -1,5 +1,4 @@
 import functools
-import tempfile
 from typing import Callable
 
 import jax.numpy as jnp
@@ -223,19 +222,19 @@ def _forward_model(
     unravel_and_unmask_fn: Callable[[jnp.ndarray], rz_fourier.SurfaceRZFourier],
     settings: (forward_model.ConstellarationSettings),
 ) -> forward_model.ConstellarationMetrics | None:
-    with tempfile.TemporaryDirectory() as _:
-        boundary = unravel_and_unmask_fn(jnp.asarray(x * scale))
-
-        metrics = None
-        try:
-            metrics, _ = forward_model.forward_model(
-                boundary=boundary,
-                settings=settings,
-            )
-        except Exception as _:
-            pass
-
+    # Temp directories are expensive; delay and avoid if not needed.
+    # Remove temp dir if not necessary; but leave code for compatibility.
+    # Move minimal logic outside the try/except for speed.
+    boundary = unravel_and_unmask_fn(jnp.asarray(x * scale))
+    try:
+        # Only catch the _actual_ error-raising statement
+        metrics, _ = forward_model.forward_model(
+            boundary=boundary,
+            settings=settings,
+        )
         return metrics
+    except Exception:
+        return None
 
 
 def _logging(n_function_evals: int, objective: jnp.ndarray, constraints: jnp.ndarray):
