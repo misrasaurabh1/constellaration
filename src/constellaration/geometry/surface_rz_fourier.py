@@ -125,14 +125,14 @@ class SurfaceRZFourier(pydantic_numpy.BaseModelWithNumpy):
                 raise ValueError(
                     "r_sin and z_cos should be None if is_stellarator_symmetric."
                 )
-
             ntor = self.max_toroidal_mode
-            if any(self.r_cos[0, :ntor] != 0.0):
+            # Use NumPy .any() for fast array-wise checks.
+            if self.r_cos[0, :ntor].any():
                 raise ValueError(
                     "r_cos for m=0 and n<0 must be 0.0 for "
                     "stellarator symmetric surfaces."
                 )
-            if any(self.z_sin[0, : ntor + 1] != 0.0):
+            if self.z_sin[0, : ntor + 1].any():
                 raise ValueError(
                     "z_sin for m=0 and n<=0 must be 0.0 for "
                     "stellarator symmetric surfaces."
