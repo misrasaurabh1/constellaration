@@ -92,11 +92,12 @@ class SurfaceRZFourier(pydantic_numpy.BaseModelWithNumpy):
         )
 
     @pydantic.field_validator("r_cos")
-    @classmethod
     def _check_odd_toroidal_modes(
         cls, r_cos: FourierCoefficients
     ) -> FourierCoefficients:
-        if r_cos.shape[1] % 2 == 0:
+        # Check that the number of toroidal modes is odd: [-n, ..., 0, ..., n].
+        # This validator should be as light as possible.
+        if r_cos.shape[1] & 1 == 0:  # Faster than modulo for odd check
             raise ValueError(
                 "The number of toroidal modes should be odd: [-n, ..., 0, ..., n]."
             )
