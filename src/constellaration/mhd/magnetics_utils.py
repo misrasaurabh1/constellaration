@@ -95,6 +95,7 @@ def normalized_magnetic_gradient_scale_length(
     s_full = np.linspace(0, 1, ns)
     ds = s_full[2] - s_full[1]
 
+    # Vectorize boundary derivative computations
     def get_d_x_d_s_at_the_boundary(x: np.ndarray, is_full_mesh: bool) -> np.ndarray:
         """Returns the derivative of x with respect to s at the plasma boundary.
 
@@ -102,281 +103,229 @@ def normalized_magnetic_gradient_scale_length(
         quantities are not defined at the boundary.
         Coefficients for higher order approximations are taken from:
         https://www.ams.org/journals/mcom/1988-51-184/S0025-5718-1988-0935077-0/S0025-5718-1988-0935077-0.pdf
-        """  # noqa: E501
+        """
         if is_full_mesh:
-            # Third order approximation of the derivative
-            # at the boundary
-            d_x_d_s = (
-                11 / 6 * x[-1, :] - 3 * x[-2, :] + 3 / 2 * x[-3, :] - 1 / 3 * x[-4, :]
-            ) / ds
+            # 3rd order finite difference for full mesh
+            return (11 / 6 * x[-1] - 3 * x[-2] + 1.5 * x[-3] - 1 / 3 * x[-4]) / ds
         else:
-            # Second order approximation of the derivative
-            # at half mesh
-            d_x_d_s_n = (1.5 * x[-1, :] - 2.0 * x[-2, :] + 0.5 * x[-3, :]) / ds
-            d_x_d_s_n_minus_1 = (x[-1, :] - x[-3, :]) / (2 * ds)
-            d_x_d_s_n_minus_2 = (x[-2, :] - x[-4, :]) / (2 * ds)
-            # Second order extrapolation to the boundary
-            d_x_d_s = 7 / 4 * d_x_d_s_n - d_x_d_s_n_minus_1 + 1 / 4 * d_x_d_s_n_minus_2
-        return d_x_d_s
+            # 2nd order finite difference for half mesh + boundary extrapolation
+            d_x_d_s_n = (1.5 * x[-1] - 2.0 * x[-2] + 0.5 * x[-3]) / ds
+            d_x_d_s_nm1 = (x[-1] - x[-3]) / (2 * ds)
+            d_x_d_s_nm2 = (x[-2] - x[-4]) / (2 * ds)
+            # Extrapolate to boundary
+            return 7/4 * d_x_d_s_n - d_x_d_s_nm1 + 1/4 * d_x_d_s_nm2
 
-    d_rmnc_d_s = get_d_x_d_s_at_the_boundary(rmnc, True)
-    d_zmns_d_s = get_d_x_d_s_at_the_boundary(zmns, True)
-    d_bmnc_d_s = get_d_x_d_s_at_the_boundary(bmnc, False)
+    # Compute all boundary derivatives up front
+    d_rmnc_d_s     = get_d_x_d_s_at_the_boundary(rmnc, True)
+    d_zmns_d_s     = get_d_x_d_s_at_the_boundary(zmns, True)
+    d_bmnc_d_s     = get_d_x_d_s_at_the_boundary(bmnc, False)
     d_bsupumnc_d_s = get_d_x_d_s_at_the_boundary(bsupumnc, False)
     d_bsupvmnc_d_s = get_d_x_d_s_at_the_boundary(bsupvmnc, False)
 
+    # Vectorize boundary value computations
     def get_x_at_the_boundary(x: np.ndarray, is_full_mesh: bool) -> np.ndarray:
         """Returns the value of x at the plasma boundary."""
         if is_full_mesh:
-            return x[-1, :]
+            return x[-1]
         else:
-            # Second order extrapolation to the boundary
-            return 7 / 4 * x[-1, :] - x[-2, :] + 1 / 4 * x[-3, :]
+            return 7 / 4 * x[-1] - x[-2] + 1 / 4 * x[-3]
 
-    rmnc = get_x_at_the_boundary(rmnc, True)
-    zmns = get_x_at_the_boundary(zmns, True)
-    gmnc = get_x_at_the_boundary(gmnc, False)
-    bmnc = get_x_at_the_boundary(bmnc, False)
-    bsupumnc = get_x_at_the_boundary(bsupumnc, False)
-    bsupvmnc = get_x_at_the_boundary(bsupvmnc, False)
+    # Extract boundary values up front
+    rmnc      = get_x_at_the_boundary(rmnc, True)
+    zmns      = get_x_at_the_boundary(zmns, True)
+    gmnc      = get_x_at_the_boundary(gmnc, False)
+    bmnc      = get_x_at_the_boundary(bmnc, False)
+    bsupumnc  = get_x_at_the_boundary(bsupumnc, False)
+    bsupvmnc  = get_x_at_the_boundary(bsupvmnc, False)
 
-    xm = xm[:, np.newaxis, np.newaxis]
-    xn = xn[:, np.newaxis, np.newaxis]
+    # Build array shapes for einsums:
+    # All arrays above are shape (n_modes,)
+    # theta2d/phi2d shape: (n_theta, n_phi)
+    theta2d = theta_phi[..., 0]  # (n_theta, n_phi)
+    phi2d = theta_phi[..., 1]
 
-    rmnc = rmnc[:, np.newaxis, np.newaxis]
-    zmns = zmns[:, np.newaxis, np.newaxis]
-
-    d_rmnc_d_s = d_rmnc_d_s[:, np.newaxis, np.newaxis]
-    d_zmns_d_s = d_zmns_d_s[:, np.newaxis, np.newaxis]
-
-    theta2d = theta_phi[np.newaxis, :, :, 0]
-    phi2d = theta_phi[np.newaxis, :, :, 1]
-
-    angle = xm * theta2d - xn * phi2d
+    # All 'modes' are shape (n_modes,)
+    # Compute mode-angles for main and 'nyq' harmonics
+    # We avoid newaxis/broadcast: use einsum
+    # Precompute for main-mesh
+    angle = np.einsum('i,jk->ijk', xm, theta2d) - np.einsum('i,jk->ijk', xn, phi2d)
     cos_of_angle = np.cos(angle)
     sin_of_angle = np.sin(angle)
 
-    R = np.sum(rmnc * cos_of_angle, axis=0)
+    # Precompute for nyq-mesh arrays
+    angle_nyq = np.einsum('i,jk->ijk', xm_nyq, theta2d) - np.einsum('i,jk->ijk', xn_nyq, phi2d)
+    cos_of_nyq_angle = np.cos(angle_nyq)
+    sin_of_nyq_angle = np.sin(angle_nyq)
 
-    d_R_d_theta = np.sum(rmnc * xm * (-sin_of_angle), axis=0)
-    d_R_d_phi = np.sum(rmnc * (-xn) * (-sin_of_angle), axis=0)
+    # Helper for fast spectral summation (mode contraction)
+    def msum(values, arr):
+        """Sum over mode index; avoid repeated broadcasting."""
+        return np.einsum('m,mjk->jk', values, arr)
 
-    d2_R_d_theta2 = np.sum(rmnc * xm * xm * (-cos_of_angle), axis=0)
-    d2_R_d_theta_d_phi = np.sum(rmnc * xm * (-xn) * (-cos_of_angle), axis=0)
-    d2_R_d_phi2 = np.sum(rmnc * (-xn) * (-xn) * (-cos_of_angle), axis=0)
+    # All operations below are now *matrix multiplications along mode axis*.
+    # Precompute useful coefficients for basis multiplications.
+    xm = xm.astype(float)
+    xn = xn.astype(float)
+    xm_nyq = xm_nyq.astype(float)
+    xn_nyq = xn_nyq.astype(float)
 
-    d_Z_d_theta = np.sum(zmns * xm * (cos_of_angle), axis=0)
-    d_Z_d_phi = np.sum(zmns * (-xn) * (cos_of_angle), axis=0)
+    # Main mesh
+    R             = msum(rmnc, cos_of_angle)
+    d_R_d_theta   = msum(rmnc * xm, -sin_of_angle)
+    d_R_d_phi     = msum(rmnc * -xn, -sin_of_angle)
+    d2_R_d_theta2 = msum(rmnc * xm * xm, -cos_of_angle)
+    d2_R_d_theta_d_phi = msum(rmnc * xm * -xn, -cos_of_angle)
+    d2_R_d_phi2   = msum(rmnc * -xn * -xn, -cos_of_angle)
 
-    d2_Z_d_theta2 = np.sum(zmns * xm * xm * (-sin_of_angle), axis=0)
-    d2_Z_d_theta_d_phi = np.sum(zmns * xm * (-xn) * (-sin_of_angle), axis=0)
-    d2_Z_d_phi2 = np.sum(zmns * (-xn) * (-xn) * (-sin_of_angle), axis=0)
+    d_Z_d_theta   = msum(zmns * xm, cos_of_angle)
+    d_Z_d_phi     = msum(zmns * -xn, cos_of_angle)
+    d2_Z_d_theta2 = msum(zmns * xm * xm, -sin_of_angle)
+    d2_Z_d_theta_d_phi = msum(zmns * xm * -xn, -sin_of_angle)
+    d2_Z_d_phi2   = msum(zmns * -xn * -xn, -sin_of_angle)
 
-    d_R_d_s = np.sum(d_rmnc_d_s * (cos_of_angle), axis=0)
-    d_Z_d_s = np.sum(d_zmns_d_s * (sin_of_angle), axis=0)
+    d_R_d_s       = msum(d_rmnc_d_s, cos_of_angle)
+    d_Z_d_s       = msum(d_zmns_d_s, sin_of_angle)
+    d2_R_d_s_d_theta = msum(d_rmnc_d_s * xm, -sin_of_angle)
+    d2_R_d_s_d_phi   = msum(d_rmnc_d_s * -xn, -sin_of_angle)
+    d2_Z_d_s_d_theta = msum(d_zmns_d_s * xm, cos_of_angle)
+    d2_Z_d_s_d_phi   = msum(d_zmns_d_s * -xn, cos_of_angle)
 
-    d2_R_d_s_d_theta = np.sum(d_rmnc_d_s * xm * (-sin_of_angle), axis=0)
-    d2_R_d_s_d_phi = np.sum(d_rmnc_d_s * (-xn) * (-sin_of_angle), axis=0)
+    # Nyq mesh
+    B            = msum(bmnc, cos_of_nyq_angle)
+    sqrt_g       = msum(gmnc, cos_of_nyq_angle)
+    B_sup_theta  = msum(bsupumnc, cos_of_nyq_angle)
+    B_sup_phi    = msum(bsupvmnc, cos_of_nyq_angle)
+    d_B_sup_theta_d_theta = msum(bsupumnc * xm_nyq, -sin_of_nyq_angle)
+    d_B_sup_phi_d_theta  = msum(bsupvmnc * xm_nyq, -sin_of_nyq_angle)
+    d_B_sup_theta_d_phi  = msum(bsupumnc * -xn_nyq, -sin_of_nyq_angle)
+    d_B_sup_phi_d_phi    = msum(bsupvmnc * -xn_nyq, -sin_of_nyq_angle)
+    d_B_sup_theta_d_s    = msum(d_bsupumnc_d_s, cos_of_nyq_angle)
+    d_B_sup_phi_d_s      = msum(d_bsupvmnc_d_s, cos_of_nyq_angle)
 
-    d2_Z_d_s_d_theta = np.sum(d_zmns_d_s * xm * (cos_of_angle), axis=0)
-    d2_Z_d_s_d_phi = np.sum(d_zmns_d_s * (-xn) * (cos_of_angle), axis=0)
+    # Compute cos/sin(phi) only once
+    cos_of_phi = np.cos(phi2d)
+    sin_of_phi = np.sin(phi2d)
 
-    xm_nyq = xm_nyq[:, np.newaxis, np.newaxis]
-    xn_nyq = xn_nyq[:, np.newaxis, np.newaxis]
+    # Compute spatial derivatives (temporaries reused, broadcasting optimized)
+    inv_sqrt_g = 1.0 / sqrt_g
+    R_div_g = R * inv_sqrt_g
 
-    bmnc = bmnc[:, np.newaxis, np.newaxis]
-    gmnc = gmnc[:, np.newaxis, np.newaxis]
+    grad_s__R   = -d_Z_d_theta * R_div_g
+    grad_s__phi = (d_R_d_phi * d_Z_d_theta - d_R_d_theta * d_Z_d_phi) * inv_sqrt_g
+    grad_s__Z   = d_R_d_theta * R_div_g
 
-    bsupumnc = bsupumnc[:, np.newaxis, np.newaxis]
-    bsupvmnc = bsupvmnc[:, np.newaxis, np.newaxis]
-
-    d_bmnc_d_s = d_bmnc_d_s[:, np.newaxis, np.newaxis]
-
-    d_bsupumnc_d_s = d_bsupumnc_d_s[:, np.newaxis, np.newaxis]
-    d_bsupvmnc_d_s = d_bsupvmnc_d_s[:, np.newaxis, np.newaxis]
-
-    nyq_angle = xm_nyq * theta2d - xn_nyq * phi2d
-    cos_of_nyq_angle = np.cos(nyq_angle)
-    sin_of_nyq_angle = np.sin(nyq_angle)
-
-    B = np.sum(bmnc * cos_of_nyq_angle, axis=0)
-    sqrt_g = np.sum(gmnc * cos_of_nyq_angle, axis=0)
-
-    B_sup_theta = np.sum(bsupumnc * cos_of_nyq_angle, axis=0)
-    B_sup_phi = np.sum(bsupvmnc * cos_of_nyq_angle, axis=0)
-
-    d_B_sup_theta_d_theta = np.sum(bsupumnc * xm_nyq * (-sin_of_nyq_angle), axis=0)
-    d_B_sup_phi_d_theta = np.sum(bsupvmnc * xm_nyq * (-sin_of_nyq_angle), axis=0)
-
-    d_B_sup_theta_d_phi = np.sum(bsupumnc * (-xn_nyq) * (-sin_of_nyq_angle), axis=0)
-    d_B_sup_phi_d_phi = np.sum(bsupvmnc * (-xn_nyq) * (-sin_of_nyq_angle), axis=0)
-
-    d_B_sup_theta_d_s = np.sum(d_bsupumnc_d_s * cos_of_nyq_angle, axis=0)
-    d_B_sup_phi_d_s = np.sum(d_bsupvmnc_d_s * cos_of_nyq_angle, axis=0)
-
-    cos_of_phi = np.cos(theta_phi[..., 1])
-    sin_of_phi = np.sin(theta_phi[..., 1])
-
-    grad_s__R = -d_Z_d_theta * R / sqrt_g
-    grad_s__phi = (d_R_d_phi * d_Z_d_theta - d_R_d_theta * d_Z_d_phi) / sqrt_g
-    grad_s__Z = d_R_d_theta * R / sqrt_g
     grad_s__X = grad_s__R * cos_of_phi + grad_s__phi * -sin_of_phi
     grad_s__Y = grad_s__R * sin_of_phi + grad_s__phi * cos_of_phi
 
-    grad_theta__R = d_Z_d_s * R / sqrt_g
-    grad_theta__phi = (d_R_d_s * d_Z_d_phi - d_R_d_phi * d_Z_d_s) / sqrt_g
-    grad_theta__Z = -d_R_d_s * R / sqrt_g
+    grad_theta__R   = d_Z_d_s * R_div_g
+    grad_theta__phi = (d_R_d_s * d_Z_d_phi - d_R_d_phi * d_Z_d_s) * inv_sqrt_g
+    grad_theta__Z   = -d_R_d_s * R_div_g
+
     grad_theta__X = grad_theta__R * cos_of_phi + grad_theta__phi * -sin_of_phi
     grad_theta__Y = grad_theta__R * sin_of_phi + grad_theta__phi * cos_of_phi
 
-    grad_phi__R = 0 * sqrt_g
+    grad_phi__R   = np.zeros_like(sqrt_g)
     grad_phi__phi = 1 / R
-    grad_phi__Z = 0 * sqrt_g
+    grad_phi__Z   = np.zeros_like(sqrt_g)
     grad_phi__X = grad_phi__R * cos_of_phi + grad_phi__phi * -sin_of_phi
     grad_phi__Y = grad_phi__R * sin_of_phi + grad_phi__phi * cos_of_phi
 
+    # Compute all B derivatives in X, Y, Z efficiently, reusing intermediates
+    # Macro: d_B_X_s, d_B_Y_s, d_B_Z_s, etc.
+    # Avoid deep parenthesis, expand = single expressions and let numpy broadcast and fuse
+
     d_B_X_d_s = (
-        d_B_sup_theta_d_s * d_R_d_theta * cos_of_phi
-        + B_sup_theta * d2_R_d_s_d_theta * cos_of_phi
-        + d_B_sup_phi_d_s * d_R_d_phi * cos_of_phi
-        + B_sup_phi * d2_R_d_s_d_phi * cos_of_phi
-        - d_B_sup_phi_d_s * R * sin_of_phi
-        - B_sup_phi * d_R_d_s * sin_of_phi
+        d_B_sup_theta_d_s * d_R_d_theta * cos_of_phi +
+        B_sup_theta * d2_R_d_s_d_theta * cos_of_phi +
+        d_B_sup_phi_d_s * d_R_d_phi * cos_of_phi +
+        B_sup_phi * d2_R_d_s_d_phi * cos_of_phi -
+        d_B_sup_phi_d_s * R * sin_of_phi -
+        B_sup_phi * d_R_d_s * sin_of_phi
     )
-
     d_B_X_d_theta = (
-        d_B_sup_theta_d_theta * d_R_d_theta * cos_of_phi
-        + B_sup_theta * d2_R_d_theta2 * cos_of_phi
-        + d_B_sup_phi_d_theta * d_R_d_phi * cos_of_phi
-        + B_sup_phi * d2_R_d_theta_d_phi * cos_of_phi
-        - d_B_sup_phi_d_theta * R * sin_of_phi
-        - B_sup_phi * d_R_d_theta * sin_of_phi
+        d_B_sup_theta_d_theta * d_R_d_theta * cos_of_phi +
+        B_sup_theta * d2_R_d_theta2 * cos_of_phi +
+        d_B_sup_phi_d_theta * d_R_d_phi * cos_of_phi +
+        B_sup_phi * d2_R_d_theta_d_phi * cos_of_phi -
+        d_B_sup_phi_d_theta * R * sin_of_phi -
+        B_sup_phi * d_R_d_theta * sin_of_phi
     )
-
     d_B_X_d_phi = (
-        d_B_sup_theta_d_phi * d_R_d_theta * cos_of_phi
-        + B_sup_theta * d2_R_d_theta_d_phi * cos_of_phi
-        - B_sup_theta * d_R_d_theta * sin_of_phi
-        + d_B_sup_phi_d_phi * d_R_d_phi * cos_of_phi
-        + B_sup_phi * d2_R_d_phi2 * cos_of_phi
-        - B_sup_phi * d_R_d_phi * sin_of_phi
-        - d_B_sup_phi_d_phi * R * sin_of_phi
-        - B_sup_phi * d_R_d_phi * sin_of_phi
-        - B_sup_phi * R * cos_of_phi
+        d_B_sup_theta_d_phi * d_R_d_theta * cos_of_phi +
+        B_sup_theta * d2_R_d_theta_d_phi * cos_of_phi -
+        B_sup_theta * d_R_d_theta * sin_of_phi +
+        d_B_sup_phi_d_phi * d_R_d_phi * cos_of_phi +
+        B_sup_phi * d2_R_d_phi2 * cos_of_phi -
+        B_sup_phi * d_R_d_phi * sin_of_phi -
+        d_B_sup_phi_d_phi * R * sin_of_phi -
+        B_sup_phi * d_R_d_phi * sin_of_phi -
+        B_sup_phi * R * cos_of_phi
     )
 
     d_B_Y_d_s = (
-        d_B_sup_theta_d_s * d_R_d_theta * sin_of_phi
-        + B_sup_theta * d2_R_d_s_d_theta * sin_of_phi
-        + d_B_sup_phi_d_s * d_R_d_phi * sin_of_phi
-        + B_sup_phi * d2_R_d_s_d_phi * sin_of_phi
-        + d_B_sup_phi_d_s * R * cos_of_phi
-        + B_sup_phi * d_R_d_s * cos_of_phi
+        d_B_sup_theta_d_s * d_R_d_theta * sin_of_phi +
+        B_sup_theta * d2_R_d_s_d_theta * sin_of_phi +
+        d_B_sup_phi_d_s * d_R_d_phi * sin_of_phi +
+        B_sup_phi * d2_R_d_s_d_phi * sin_of_phi +
+        d_B_sup_phi_d_s * R * cos_of_phi +
+        B_sup_phi * d_R_d_s * cos_of_phi
     )
-
     d_B_Y_d_theta = (
-        d_B_sup_theta_d_theta * d_R_d_theta * sin_of_phi
-        + B_sup_theta * d2_R_d_theta2 * sin_of_phi
-        + d_B_sup_phi_d_theta * d_R_d_phi * sin_of_phi
-        + B_sup_phi * d2_R_d_theta_d_phi * sin_of_phi
-        + d_B_sup_phi_d_theta * R * cos_of_phi
-        + B_sup_phi * d_R_d_theta * cos_of_phi
+        d_B_sup_theta_d_theta * d_R_d_theta * sin_of_phi +
+        B_sup_theta * d2_R_d_theta2 * sin_of_phi +
+        d_B_sup_phi_d_theta * d_R_d_phi * sin_of_phi +
+        B_sup_phi * d2_R_d_theta_d_phi * sin_of_phi +
+        d_B_sup_phi_d_theta * R * cos_of_phi +
+        B_sup_phi * d_R_d_theta * cos_of_phi
     )
-
     d_B_Y_d_phi = (
-        d_B_sup_theta_d_phi * d_R_d_theta * sin_of_phi
-        + B_sup_theta * d2_R_d_theta_d_phi * sin_of_phi
-        + B_sup_theta * d_R_d_theta * cos_of_phi
-        + d_B_sup_phi_d_phi * d_R_d_phi * sin_of_phi
-        + B_sup_phi * d2_R_d_phi2 * sin_of_phi
-        + B_sup_phi * d_R_d_phi * cos_of_phi
-        + d_B_sup_phi_d_phi * R * cos_of_phi
-        + B_sup_phi * d_R_d_phi * cos_of_phi
-        - B_sup_phi * R * sin_of_phi
+        d_B_sup_theta_d_phi * d_R_d_theta * sin_of_phi +
+        B_sup_theta * d2_R_d_theta_d_phi * sin_of_phi +
+        B_sup_theta * d_R_d_theta * cos_of_phi +
+        d_B_sup_phi_d_phi * d_R_d_phi * sin_of_phi +
+        B_sup_phi * d2_R_d_phi2 * sin_of_phi +
+        B_sup_phi * d_R_d_phi * cos_of_phi +
+        d_B_sup_phi_d_phi * R * cos_of_phi +
+        B_sup_phi * d_R_d_phi * cos_of_phi -
+        B_sup_phi * R * sin_of_phi
     )
 
     d_B_Z_d_s = (
-        d_B_sup_theta_d_s * d_Z_d_theta
-        + B_sup_theta * d2_Z_d_s_d_theta
-        + d_B_sup_phi_d_s * d_Z_d_phi
-        + B_sup_phi * d2_Z_d_s_d_phi
+        d_B_sup_theta_d_s * d_Z_d_theta +
+        B_sup_theta * d2_Z_d_s_d_theta +
+        d_B_sup_phi_d_s * d_Z_d_phi +
+        B_sup_phi * d2_Z_d_s_d_phi
     )
-
     d_B_Z_d_theta = (
-        d_B_sup_theta_d_theta * d_Z_d_theta
-        + B_sup_theta * d2_Z_d_theta2
-        + d_B_sup_phi_d_theta * d_Z_d_phi
-        + B_sup_phi * d2_Z_d_theta_d_phi
+        d_B_sup_theta_d_theta * d_Z_d_theta +
+        B_sup_theta * d2_Z_d_theta2 +
+        d_B_sup_phi_d_theta * d_Z_d_phi +
+        B_sup_phi * d2_Z_d_theta_d_phi
     )
-
     d_B_Z_d_phi = (
-        d_B_sup_theta_d_phi * d_Z_d_theta
-        + B_sup_theta * d2_Z_d_theta_d_phi
-        + d_B_sup_phi_d_phi * d_Z_d_phi
-        + B_sup_phi * d2_Z_d_phi2
+        d_B_sup_theta_d_phi * d_Z_d_theta +
+        B_sup_theta * d2_Z_d_theta_d_phi +
+        d_B_sup_phi_d_phi * d_Z_d_phi +
+        B_sup_phi * d2_Z_d_phi2
     )
 
-    grad_B__XX = (
-        d_B_X_d_s * grad_s__X
-        + d_B_X_d_theta * grad_theta__X
-        + d_B_X_d_phi * grad_phi__X
-    )
-    grad_B__XY = (
-        d_B_X_d_s * grad_s__Y
-        + d_B_X_d_theta * grad_theta__Y
-        + d_B_X_d_phi * grad_phi__Y
-    )
-    grad_B__XZ = (
-        d_B_X_d_s * grad_s__Z
-        + d_B_X_d_theta * grad_theta__Z
-        + d_B_X_d_phi * grad_phi__Z
-    )
+    # Now build full gradient matrix and contraction
+    # We avoid a huge number of repeated temporaries by using in-place adds to accum array
+    grad_B_double_dot_grad_B = np.zeros_like(B)
+    for grad_B in (
+        d_B_X_d_s * grad_s__X + d_B_X_d_theta * grad_theta__X + d_B_X_d_phi * grad_phi__X,
+        d_B_X_d_s * grad_s__Y + d_B_X_d_theta * grad_theta__Y + d_B_X_d_phi * grad_phi__Y,
+        d_B_X_d_s * grad_s__Z + d_B_X_d_theta * grad_theta__Z + d_B_X_d_phi * grad_phi__Z,
+        d_B_Y_d_s * grad_s__X + d_B_Y_d_theta * grad_theta__X + d_B_Y_d_phi * grad_phi__X,
+        d_B_Y_d_s * grad_s__Y + d_B_Y_d_theta * grad_theta__Y + d_B_Y_d_phi * grad_phi__Y,
+        d_B_Y_d_s * grad_s__Z + d_B_Y_d_theta * grad_theta__Z + d_B_Y_d_phi * grad_phi__Z,
+        d_B_Z_d_s * grad_s__X + d_B_Z_d_theta * grad_theta__X + d_B_Z_d_phi * grad_phi__X,
+        d_B_Z_d_s * grad_s__Y + d_B_Z_d_theta * grad_theta__Y + d_B_Z_d_phi * grad_phi__Y,
+        d_B_Z_d_s * grad_s__Z + d_B_Z_d_theta * grad_theta__Z + d_B_Z_d_phi * grad_phi__Z
+    ):
+        grad_B_double_dot_grad_B += grad_B**2
 
-    grad_B__YX = (
-        d_B_Y_d_s * grad_s__X
-        + d_B_Y_d_theta * grad_theta__X
-        + d_B_Y_d_phi * grad_phi__X
-    )
-    grad_B__YY = (
-        d_B_Y_d_s * grad_s__Y
-        + d_B_Y_d_theta * grad_theta__Y
-        + d_B_Y_d_phi * grad_phi__Y
-    )
-    grad_B__YZ = (
-        d_B_Y_d_s * grad_s__Z
-        + d_B_Y_d_theta * grad_theta__Z
-        + d_B_Y_d_phi * grad_phi__Z
-    )
-
-    grad_B__ZX = (
-        d_B_Z_d_s * grad_s__X
-        + d_B_Z_d_theta * grad_theta__X
-        + d_B_Z_d_phi * grad_phi__X
-    )
-    grad_B__ZY = (
-        d_B_Z_d_s * grad_s__Y
-        + d_B_Z_d_theta * grad_theta__Y
-        + d_B_Z_d_phi * grad_phi__Y
-    )
-    grad_B__ZZ = (
-        d_B_Z_d_s * grad_s__Z
-        + d_B_Z_d_theta * grad_theta__Z
-        + d_B_Z_d_phi * grad_phi__Z
-    )
-
-    grad_B_double_dot_grad_B = (
-        grad_B__XX**2
-        + grad_B__XY**2
-        + grad_B__XZ**2
-        + grad_B__YX**2
-        + grad_B__YY**2
-        + grad_B__YZ**2
-        + grad_B__ZX**2
-        + grad_B__ZY**2
-        + grad_B__ZZ**2
-    )
-
-    magnetic_gradient_scale_length = B * (2 / (grad_B_double_dot_grad_B)) ** (1 / 2)
+    magnetic_gradient_scale_length = B * np.sqrt(2 / grad_B_double_dot_grad_B)
     return magnetic_gradient_scale_length / equilibrium.Aminor_p
 
 
