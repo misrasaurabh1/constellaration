@@ -138,9 +138,7 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
 
     _average_triangularity_upper_bound: float = -0.5
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.3
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.3
 
     _does_it_require_qi: bool = False
 
@@ -213,9 +211,7 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
 
     _aspect_ratio_upper_bound: pydantic.PositiveFloat = 10.0
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -4.0
 
@@ -301,17 +297,13 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
         vacuum_well_lower_bound: Minimum required vacuum well.
     """
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -3.5
 
     _edge_magnetic_mirror_ratio_upper_bound: pydantic.PositiveFloat = 0.25
 
-    _flux_compression_in_regions_of_bad_curvature_upper_bound: (
-        pydantic.PositiveFloat
-    ) = 0.9
+    _flux_compression_in_regions_of_bad_curvature_upper_bound: pydantic.PositiveFloat = 0.9
 
     _vacuum_well_lower_bound: pydantic.NonNegativeFloat = 0.0
 
@@ -349,10 +341,12 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
             - minimum normalized magnetic gradient scale length (maximize)
             - aspect ratio (minimize)
         """
-        return [
+        # Use tuple instead of list for faster access and lower overhead.
+        # Construction is now direct, avoiding intermediate list object.
+        return (
             (metrics.minimum_normalized_magnetic_gradient_scale_length, False),
             (metrics.aspect_ratio, True),
-        ]
+        )
 
     def _score(self, metrics: list[forward_model.ConstellarationMetrics]) -> float:
         feasible_metrics = [m for m in metrics if self.is_feasible(m)]
