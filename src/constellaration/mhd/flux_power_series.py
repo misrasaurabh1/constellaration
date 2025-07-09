@@ -29,22 +29,21 @@ def evaluate_at_normalized_effective_radius(
     profile: FluxPowerSeriesProfile,
     normalized_effective_radius: jt.Float[NpOrJaxArray, " n_points"],
 ) -> jt.Float[NpOrJaxArray, " n_points"]:
-    return evaluate_at_normalized_toroidal_flux(
-        profile, normalized_effective_radius**2
-    )
+    return evaluate_at_normalized_toroidal_flux(profile, normalized_effective_radius**2)
 
 
 def evaluate_at_normalized_toroidal_flux(
     profile: FluxPowerSeriesProfile,
     normalized_toroidal_flux: jt.Float[NpOrJaxArray, " n_points"],
 ) -> jt.Float[NpOrJaxArray, " n_points"]:
-    return np.sum(
-        [
-            a_n * normalized_toroidal_flux**n
-            for n, a_n in enumerate(profile.coefficients)
-        ],
-        axis=0,
-    )
+    # Vectorized power series evaluation for improved performance.
+    coefs = np.asarray(profile.coefficients)
+    # shape: (n_coefs, n_points)
+    powers = np.power.outer(normalized_toroidal_flux, np.arange(coefs.size)).T
+    # coefs shape: (n_coefs,)
+    # powers shape: (n_coefs, n_points)
+    # Weighted sum over all coefficients, shape: (n_points,)
+    return np.dot(coefs, powers)
 
 
 def _evaluate_nth_derivative(
