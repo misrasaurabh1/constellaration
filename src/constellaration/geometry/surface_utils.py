@@ -68,9 +68,7 @@ def n_poloidal_toroidal_points_to_satisfy_nyquist_criterion(
     Returns:
         A tuple with the number of poloidal and toroidal grid points.
     """
-    n_poloidal_points = 2 * n_poloidal_modes + 6
-    n_toroidal_points = 2 * max_toroidal_mode + 4
-    return n_poloidal_points, n_toroidal_points
+    return 2 * n_poloidal_modes + 6, 2 * max_toroidal_mode + 4
 
 
 def make_s_theta_phi_grid(
