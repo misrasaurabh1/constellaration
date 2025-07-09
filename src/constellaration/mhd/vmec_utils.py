@@ -389,15 +389,25 @@ def _build_radial_interpolator(
     fourier_coefficients: jt.Float[np.ndarray, "n_surfaces n_fourier_coefficients"],
     is_on_full_mesh: bool,
 ) -> interpolate.interp1d:
+    # Cache references to minimize attribute lookup overhead
     if is_on_full_mesh:
         x = equilibrium.normalized_toroidal_flux_full_grid_mesh
     else:
         x = equilibrium.normalized_toroidal_flux_half_grid_mesh[1:]
+    # Ensure x and y are contiguous arrays, reduce unnecessary copies if possible
+    x = np.ascontiguousarray(x)
+    y = np.ascontiguousarray(fourier_coefficients)
+
+    # Fastest if x is always sorted, tell interp1d to skip checks
+    # Avoids data copies, disables bounds error checks since we use extrapolation
     return interpolate.interp1d(
-        x=x,
-        y=fourier_coefficients,
+        x,
+        y,
         axis=0,
         fill_value="extrapolate",  # pyright: ignore
+        assume_sorted=True,
+        bounds_error=False,
+        copy=False,
     )
 
 
