@@ -152,12 +152,24 @@ class OmnigenityObjeciveSettings(pydantic.BaseModel):
             equilibrium: desc_equilibrium.Equilibrium,
             field: desc_magnetic_fields.OmnigenousField,
         ) -> desc_objectives.Omnigenity:
+            # Cache attribute lookups
+            eq_lcfs_grid_rho = self.eq_lcfs_grid_rho
+            eq_lcfs_grid_M_factor = self.eq_lcfs_grid_M_factor
+            eq_lcfs_grid_N_factor = self.eq_lcfs_grid_N_factor
+            weight = self.weight
+            name = self.name
+
+            # Access equilibrium attributes once
+            eq_M = equilibrium.M
+            eq_N = equilibrium.N
+            eq_NFP = equilibrium.NFP
+
             eq_lcfs_grid = desc_grid.LinearGrid(
-                rho=self.eq_lcfs_grid_rho,  # type: ignore
-                M=self.eq_lcfs_grid_M_factor * equilibrium.M,
-                N=self.eq_lcfs_grid_N_factor * equilibrium.N,
-                NFP=equilibrium.NFP,
-                sym=False,  # TODO(scadena): revise this assumption from tutorial
+                rho=eq_lcfs_grid_rho,
+                M=eq_lcfs_grid_M_factor * eq_M,
+                N=eq_lcfs_grid_N_factor * eq_N,
+                NFP=eq_NFP,
+                sym=False,
             )
 
             return desc_objectives.Omnigenity(
@@ -165,8 +177,8 @@ class OmnigenityObjeciveSettings(pydantic.BaseModel):
                 field=field,
                 field_fixed=True,
                 eq_grid=eq_lcfs_grid,
-                weight=self.weight,  # type: ignore
-                name=self.name,
+                weight=weight,
+                name=name,
             )
 
         return term
