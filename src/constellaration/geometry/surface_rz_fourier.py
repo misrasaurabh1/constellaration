@@ -454,62 +454,42 @@ def set_max_mode_numbers(
         A new SurfaceRZFourier object with adjusted Fourier coefficient arrays.
     """
 
-    # New array sizes
     new_n_poloidal_modes = max_poloidal_mode + 1
-    new_n_toroidal_modes = 2 * max_toroidal_mode + 1  # Indices from -max_n to +max_n
+    new_n_toroidal_modes = 2 * max_toroidal_mode + 1
 
-    # Existing array sizes
     old_n_poloidal_modes = surface.n_poloidal_modes
     old_max_toroidal_mode = surface.max_toroidal_mode
 
-    # Create new arrays filled with zeros
-    new_r_cos = np.zeros(
-        (new_n_poloidal_modes, new_n_toroidal_modes), dtype=surface.r_cos.dtype
-    )
-    new_z_sin = np.zeros_like(new_r_cos)
-
-    if surface.r_sin is not None:
-        new_r_sin = np.zeros_like(new_r_cos)
-    else:
-        new_r_sin = None
-
-    if surface.z_cos is not None:
-        new_z_cos = np.zeros_like(new_r_cos)
-    else:
-        new_z_cos = None
-
-    # Determine overlapping m indices
     m_end = min(old_n_poloidal_modes, new_n_poloidal_modes)
-
-    # Determine overlapping n values
     overlapping_n_start = -min(old_max_toroidal_mode, max_toroidal_mode)
     overlapping_n_end = min(old_max_toroidal_mode, max_toroidal_mode)
 
-    # Compute indices in old and new arrays
     old_n_idx_start = overlapping_n_start + old_max_toroidal_mode
     old_n_idx_end = overlapping_n_end + old_max_toroidal_mode + 1
 
     new_n_idx_start = overlapping_n_start + max_toroidal_mode
     new_n_idx_end = overlapping_n_end + max_toroidal_mode + 1
 
-    # Copy over the overlapping coefficients
-    new_r_cos[:m_end, new_n_idx_start:new_n_idx_end] = surface.r_cos[
-        :m_end, old_n_idx_start:old_n_idx_end
-    ]
+    # Allocate minimally only if surface attribute is not None
+    new_r_cos = np.zeros((new_n_poloidal_modes, new_n_toroidal_modes), dtype=surface.r_cos.dtype)
+    _resize_coeff_array(surface.r_cos, new_r_cos, m_end, old_n_idx_start, old_n_idx_end, new_n_idx_start, new_n_idx_end)
 
-    new_z_sin[:m_end, new_n_idx_start:new_n_idx_end] = surface.z_sin[
-        :m_end, old_n_idx_start:old_n_idx_end
-    ]
+    new_z_sin = np.zeros((new_n_poloidal_modes, new_n_toroidal_modes), dtype=surface.z_sin.dtype)
+    _resize_coeff_array(surface.z_sin, new_z_sin, m_end, old_n_idx_start, old_n_idx_end, new_n_idx_start, new_n_idx_end)
 
-    if surface.r_sin is not None and new_r_sin is not None:
-        new_r_sin[:m_end, new_n_idx_start:new_n_idx_end] = surface.r_sin[
-            :m_end, old_n_idx_start:old_n_idx_end
-        ]
+    # Only allocate if .r_sin exists
+    if surface.r_sin is not None:
+        new_r_sin = np.zeros((new_n_poloidal_modes, new_n_toroidal_modes), dtype=surface.r_sin.dtype)
+        _resize_coeff_array(surface.r_sin, new_r_sin, m_end, old_n_idx_start, old_n_idx_end, new_n_idx_start, new_n_idx_end)
+    else:
+        new_r_sin = None
 
-    if surface.z_cos is not None and new_z_cos is not None:
-        new_z_cos[:m_end, new_n_idx_start:new_n_idx_end] = surface.z_cos[
-            :m_end, old_n_idx_start:old_n_idx_end
-        ]
+    # Only allocate if .z_cos exists
+    if surface.z_cos is not None:
+        new_z_cos = np.zeros((new_n_poloidal_modes, new_n_toroidal_modes), dtype=surface.z_cos.dtype)
+        _resize_coeff_array(surface.z_cos, new_z_cos, m_end, old_n_idx_start, old_n_idx_end, new_n_idx_start, new_n_idx_end)
+    else:
+        new_z_cos = None
 
     # Create a new SurfaceRZFourier object with the new arrays
     return surface.model_copy(
@@ -859,3 +839,8 @@ def build_surface_rz_fourier_mask(
             z_sin=fourier_coefficients_mask,
         ),
     )
+
+
+def _resize_coeff_array(src, dst, m_end, old_n_idx_start, old_n_idx_end, new_n_idx_start, new_n_idx_end):
+    """Efficiently copy a block from src to dst if src is not None."""
+    dst[:m_end, new_n_idx_start:new_n_idx_end] = src[:m_end, old_n_idx_start:old_n_idx_end]
