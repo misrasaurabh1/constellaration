@@ -398,13 +398,35 @@ def evaluate_dxyz_dphi(
             phi.
         The last dimension indexes X, Y, and Z.
     """
-    r = evaluate_points_rz(surface, theta_phi)[..., 0]
-    dr_dphi = _evaluate_dr_dphi(surface, theta_phi)
-    dz_dphi = _evaluate_dz_dphi(surface, theta_phi)
+    # Optimize by reusing angle, cos(angle), sin(angle)
+    angle = _compute_angle(surface, theta_phi)
+    cos_angle = np.cos(angle)
+    sin_angle = np.sin(angle)
+
+    fac = surface.n_field_periods * surface.toroidal_modes
+
+    # R, Z using Fourier contraction (faster, fused)
+    r = _surface_fourier_sum(surface.r_cos, cos_angle)
+    z = _surface_fourier_sum(surface.z_sin, sin_angle)
+    if not surface.is_stellarator_symmetric:
+        assert surface.r_sin is not None
+        assert surface.z_cos is not None
+        r += _surface_fourier_sum(surface.r_sin, sin_angle)
+        z += _surface_fourier_sum(surface.z_cos, cos_angle)
+
+    # dr/dphi and dz/dphi contracted efficiently
+    dr_dphi = _surface_fourier_sum(surface.r_cos, fac * sin_angle)
+    dz_dphi = _surface_fourier_sum(surface.z_sin, fac * -cos_angle)
+    if not surface.is_stellarator_symmetric:
+        dr_dphi += _surface_fourier_sum(surface.r_sin, fac * -cos_angle)
+        dz_dphi += _surface_fourier_sum(surface.z_cos, fac * sin_angle)
+
     phi = theta_phi[..., 1]
-    dx_dphi = dr_dphi * np.cos(phi) - r * np.sin(phi)
-    dy_dphi = dr_dphi * np.sin(phi) + r * np.cos(phi)
-    dz_dphi = dz_dphi
+    cos_phi = np.cos(phi)
+    sin_phi = np.sin(phi)
+    dx_dphi = dr_dphi * cos_phi - r * sin_phi
+    dy_dphi = dr_dphi * sin_phi + r * cos_phi
+    # dz_dphi unchanged
     return np.stack((dx_dphi, dy_dphi, dz_dphi), axis=-1)
 
 
@@ -859,3 +881,13 @@ def build_surface_rz_fourier_mask(
             z_sin=fourier_coefficients_mask,
         ),
     )
+
+
+def _surface_fourier_sum(coeff, trig_angle, axes=(-1, -2)):
+    """
+    Fast contraction of coefficients (n_poloidal_modes, n_toroidal_modes) with
+    trig_angle (..., n_poloidal_modes, n_toroidal_modes) over (-1, -2).
+    This avoids unnecessary expansion of axis 0.
+    """
+    # Use einsum: '...mn,mn->...' is a sum over last two axes
+    return np.einsum("...mn,mn->...", trig_angle, coeff)
