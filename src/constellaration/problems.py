@@ -16,12 +16,10 @@ class _Problem(abc.ABC):
 
     def is_feasible(self, metrics: forward_model.ConstellarationMetrics) -> bool:
         """Checks if the design is feasible based on the constraints."""
-        normalized_constraint_violations = self._normalized_constraint_violations(
-            metrics
-        )
-        return bool(
-            np.all(normalized_constraint_violations <= _DEFAULT_RELATIVE_TOLERANCE)
-        )
+        violations = self._normalized_constraint_violations(metrics)
+        violations = np.asarray(violations)
+        # Use in-place all() for efficiency.
+        return (violations <= _DEFAULT_RELATIVE_TOLERANCE).all()
 
     def compute_feasibility(
         self, metrics: forward_model.ConstellarationMetrics
@@ -138,9 +136,7 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
 
     _average_triangularity_upper_bound: float = -0.5
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.3
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.3
 
     _does_it_require_qi: bool = False
 
@@ -213,9 +209,7 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
 
     _aspect_ratio_upper_bound: pydantic.PositiveFloat = 10.0
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -4.0
 
@@ -301,17 +295,13 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
         vacuum_well_lower_bound: Minimum required vacuum well.
     """
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -3.5
 
     _edge_magnetic_mirror_ratio_upper_bound: pydantic.PositiveFloat = 0.25
 
-    _flux_compression_in_regions_of_bad_curvature_upper_bound: (
-        pydantic.PositiveFloat
-    ) = 0.9
+    _flux_compression_in_regions_of_bad_curvature_upper_bound: pydantic.PositiveFloat = 0.9
 
     _vacuum_well_lower_bound: pydantic.NonNegativeFloat = 0.0
 
