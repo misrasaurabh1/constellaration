@@ -182,15 +182,21 @@ class SampleStellaratorSymmetricOmnigenousFieldSetting(pydantic.BaseModel):
         Returns:
             List of sampled omnigenous fields.
         """
-
         rng = np.random.default_rng(seed)
 
-        # Check if we need to sample the parameters or if they are provided
+        nfp_min = self.n_field_periods_min
+        nfp_max = self.n_field_periods_max
+        max_x_eta_coeffs = self.max_x_eta_coefficients
+        max_x_alpha_coeffs = self.max_x_alpha_coefficients
+        n_x_alpha_coeffs = getattr(
+            self, "n_x_alpha_coefficients", 2 * max_x_alpha_coeffs + 1
+        )  # fallback if not set
+
+        # Efficiently sample n_field_periods if not provided
         n_field_periods = (
             n_field_periods
-            or rng.integers(
-                self.n_field_periods_min, self.n_field_periods_max + 1, n_samples
-            ).tolist()
+            if n_field_periods is not None
+            else rng.integers(nfp_min, nfp_max + 1, n_samples)
         )
 
         assert n_field_periods is not None
@@ -199,7 +205,7 @@ class SampleStellaratorSymmetricOmnigenousFieldSetting(pydantic.BaseModel):
             f"Got {len(n_field_periods)}."
         )
 
-        # Sample the magnetic well
+        # Sample the magnetic well (uses broadcasted random if inputs are None)
         modb_wells = self.magnetic_well_settings.sample_curves(
             seed=seed,
             n_samples=n_samples,
@@ -208,47 +214,44 @@ class SampleStellaratorSymmetricOmnigenousFieldSetting(pydantic.BaseModel):
             mirror_ratios=mirror_ratios,
         )
 
+        # Precompute m, n indices mesh
+        m_indices = np.arange(max_x_eta_coeffs + 1)[:, None]
+        n_indices = np.arange(-max_x_alpha_coeffs, max_x_alpha_coeffs + 1)[None, :]
+        m_b, n_b = np.broadcast_arrays(m_indices, n_indices)
+        sigma_matrix = self.non_zero_xlmn_std_alpha * np.exp(
+            -self.non_zero_xlmn_std_beta * np.maximum(np.abs(m_b), np.abs(n_b))
+        )
+
+        # Preallocate x_lmn array for speed. Dimensions: (n_samples, <m>, <n>)
         fields = []
-        for modb_well, nfp in zip(modb_wells, n_field_periods):
-            # Indices arrays for m (eta) and n (alpha):
-            m_indices = np.arange(self.max_x_eta_coefficients + 1).reshape(
-                (self.max_x_eta_coefficients + 1, 1)
-            )
-            n_indices = np.arange(
-                -self.max_x_alpha_coefficients, self.max_x_alpha_coefficients + 1
-            ).reshape((1, self.n_x_alpha_coefficients))
+        # Scalar for slicing: symmetry cuts half n
+        n_alpha_half = n_x_alpha_coeffs // 2
 
-            # Scale law for the standard deviation of the x_lmn coefficients
-            sigma = self.non_zero_xlmn_std_alpha * np.exp(
-                -self.non_zero_xlmn_std_beta
-                * np.maximum(np.abs(m_indices), np.abs(n_indices))
-            )
-            sigma = sigma[None, ...]
+        non_zero_mean = self.non_zero_xlmn_mean
+        non_zero_cutoff = self.non_zero_xlmn_abs_cutoff
 
-            # Sample x_lmn coefficients
-            x_lmn = rng.normal(loc=self.non_zero_xlmn_mean, scale=sigma)
-
-            # Clip values to the cutoff
-            x_lmn = np.clip(
-                x_lmn,
-                -self.non_zero_xlmn_abs_cutoff,
-                self.non_zero_xlmn_abs_cutoff,
-            )
-
-            # Enforce stellarator symmetry
-            x_lmn[:, :, self.n_x_alpha_coefficients // 2 :] = 0
+        for i in range(n_samples):
+            # x_lmn shape: (1, <m>, <n>) before slicing (as in "sigma = sigma[None,...]")
+            sigma = sigma_matrix[None, :, :]
+            x_lmn = rng.normal(loc=non_zero_mean, scale=sigma)
+            # Clip
+            np.clip(x_lmn, -non_zero_cutoff, non_zero_cutoff, out=x_lmn)
+            # Enforce stellarator symmetry (in-place)
+            # size: (1, <m>, <n>)
+            x_lmn[:, :, n_alpha_half:] = 0
             x_lmn[:, ::2, :] = 0
 
-            # Build modB_spline_knot_coefficients
-            modb_spline_knot_coefficients = np.array(
-                [modb_well, np.zeros(len(modb_well)).tolist()]
+            # Build modB_spline_knot_coefficients efficiently
+            modb_well = modb_wells[i]
+            n_modb = len(modb_well)
+            modb_spline_knot_coefficients = np.stack(
+                (np.asarray(modb_well), np.zeros(n_modb)), axis=0
             )
-
             fields.append(
                 omnigenity_field.OmnigenousField(
-                    n_field_periods=nfp,
+                    n_field_periods=int(n_field_periods[i]),
                     poloidal_winding=0,
-                    torodial_winding=nfp,  # Only OP supported
+                    torodial_winding=int(n_field_periods[i]),  # Only OP supported
                     x_lmn=x_lmn,
                     modB_spline_knot_coefficients=modb_spline_knot_coefficients,
                 )
@@ -340,67 +343,66 @@ class SampleOmnigenousFieldAndTargetsSettings(pydantic.BaseModel):
             List of sampled omnigenous fields and targets.
         """
         rng = np.random.default_rng(self.seed)
+        n_samples = self.n_samples
+        major_radius = self.major_radius
 
+        # Precompute possible list/array values up front.
         n_field_periods = (
-            None
-            if self.n_field_periods is None
-            else [self.n_field_periods] * self.n_samples
+            None if self.n_field_periods is None else [self.n_field_periods] * n_samples
         )
         mirror_ratios = (
-            None if self.mirror_ratio is None else [self.mirror_ratio] * self.n_samples
+            None if self.mirror_ratio is None else [self.mirror_ratio] * n_samples
         )
+
         omnigenous_fields = self.omnigenous_field_settings.sample_omnigenous_fields(
             seed=self.seed,
-            n_samples=self.n_samples,
+            n_samples=n_samples,
             n_field_periods=n_field_periods,
             mirror_ratios=mirror_ratios,
         )
-        edge_rotational_transform_over_n_field_periods = (
-            [self.edge_rotational_transform_over_n_field_periods] * self.n_samples
-            if self.edge_rotational_transform_over_n_field_periods is not None
-            else rng.uniform(
+
+        # All random arrays: np.ndarray, otherwise all values: list[scalar]
+        if self.edge_rotational_transform_over_n_field_periods is not None:
+            edge_rot_tr = [
+                self.edge_rotational_transform_over_n_field_periods
+            ] * n_samples
+        else:
+            edge_rot_tr = rng.uniform(
                 self.edge_rotational_transform_over_n_field_periods_min,
                 self.edge_rotational_transform_over_n_field_periods_max,
-                self.n_samples,
+                n_samples,
             )
-        )
-        rotational_transfomrs = [
-            iota_over_nfp * omnigenous_field.n_field_periods
-            for iota_over_nfp, omnigenous_field in zip(
-                edge_rotational_transform_over_n_field_periods, omnigenous_fields
-            )
-        ]
-        aspect_ratios = (
-            [self.aspect_ratio] * self.n_samples
-            if self.aspect_ratio is not None
-            else rng.uniform(
-                self.aspect_ratio_min, self.aspect_ratio_max, self.n_samples
-            )
+
+        rotational_transforms = np.asarray(edge_rot_tr) * np.array(
+            [o.n_field_periods for o in omnigenous_fields]
         )
 
+        aspect_ratios = (
+            [self.aspect_ratio] * n_samples
+            if self.aspect_ratio is not None
+            else rng.uniform(self.aspect_ratio_min, self.aspect_ratio_max, n_samples)
+        )
         max_elongations = (
-            [self.max_elongation] * self.n_samples
+            [self.max_elongation] * n_samples
             if self.max_elongation is not None
             else rng.uniform(
-                self.max_elongation_min, self.max_elongation_max, self.n_samples
+                self.max_elongation_min, self.max_elongation_max, n_samples
             )
         )
 
-        targets = []
-        for omnigenous_field, rotational_transform, aspect_ratio, max_elongation in zip(
-            omnigenous_fields,
-            rotational_transfomrs,
-            aspect_ratios,
-            max_elongations,
-        ):
-            targets.append(
-                OmnigenousFieldAndTargets(
-                    omnigenous_field=omnigenous_field,
-                    rotational_transform=rotational_transform,
-                    aspect_ratio=aspect_ratio,
-                    max_elongation=max_elongation,
-                    major_radius=self.major_radius,
-                )
+        # Vectorized zipped construction
+        return [
+            OmnigenousFieldAndTargets(
+                omnigenous_field=omnigenous_field,
+                rotational_transform=rotational_transform,
+                aspect_ratio=aspect_ratio,
+                max_elongation=max_elongation,
+                major_radius=major_radius,
             )
-
-        return targets
+            for omnigenous_field, rotational_transform, aspect_ratio, max_elongation in zip(
+                omnigenous_fields,
+                rotational_transforms,
+                aspect_ratios,
+                max_elongations,
+            )
+        ]
