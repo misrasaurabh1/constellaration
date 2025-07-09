@@ -311,10 +311,24 @@ def create_boozer_settings_from_equilibrium_resolution(
     See the wrapped function boozer.boozer_settings_from_equilibrium_resolution   for
     more details.
     """
-    return boozer_settings_from_equilibrium_resolution(
-        mhd_equilibrium=mhd_equilibrium,
-        normalized_toroidal_flux=settings.normalized_toroidal_flux,
-        verbose=settings.verbose,
+    # Cache settings attributes for faster access
+    normalized_toroidal_flux = settings.normalized_toroidal_flux
+    verbose = settings.verbose
+
+    # Cache equilibrium properties for faster access
+    mpol = mhd_equilibrium.mpol
+    ntor = mhd_equilibrium.ntor
+
+    # Direct calculation to skip extra function call
+    n_poloidal_modes = max(6 * mpol, 2)
+    max_toroidal_mode = max(2 * ntor - 1, 0)
+
+    # Direct instantiation, avoids extra stack frame and arg packing
+    return BoozerSettings(
+        normalized_toroidal_flux=normalized_toroidal_flux,
+        n_poloidal_modes=n_poloidal_modes,
+        max_toroidal_mode=max_toroidal_mode,
+        verbose=verbose,
     )
 
 
