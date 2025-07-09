@@ -239,7 +239,11 @@ def _stretch_left_side(
     y: np.ndarray, a_min: float = 0.0, a_max: float = 1.0
 ) -> np.ndarray:
     """Stretch the squashed left side of the magnetic well."""
-    return (y - y[-1]) / (y[0] - y[-1]) * (a_max - a_min) + a_min
+    y0 = y[0]
+    y_end = y[-1]
+    denom = y0 - y_end
+    # Use scalars for y[0], y[-1], and (a_max - a_min)
+    return (y - y_end) / denom * (a_max - a_min) + a_min
 
 
 def _stretch_right_side(
