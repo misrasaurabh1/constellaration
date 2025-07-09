@@ -84,6 +84,21 @@ class ElongationObjectiveSettings(pydantic.BaseModel):
 
         return term
 
+    def __call__(
+        self, equilibrium: desc_equilibrium.Equilibrium, goal: float
+    ) -> desc_objectives.Elongation:
+        if self.target_kind == "target":
+            target, bounds = goal, None
+        else:
+            target, bounds = None, (0, goal)
+        return desc_objectives.Elongation(
+            eq=equilibrium,
+            target=target,
+            bounds=bounds,
+            weight=self.weight,  # type: ignore
+            name=self.name,
+        )
+
 
 class AspectRatioObjectiveSettings(pydantic.BaseModel):
     weight: float = 1.0
@@ -110,6 +125,21 @@ class AspectRatioObjectiveSettings(pydantic.BaseModel):
 
         return term
 
+    def __call__(
+        self, equilibrium: desc_equilibrium.Equilibrium, goal: float
+    ) -> desc_objectives.AspectRatio:
+        if self.target_kind == "target":
+            target, bounds = goal, None
+        else:
+            target, bounds = None, (0, goal)
+        return desc_objectives.AspectRatio(
+            eq=equilibrium,
+            target=target,
+            bounds=bounds,
+            weight=self.weight,  # type: ignore
+            name=self.name,
+        )
+
 
 class RotationalTransformObjectiveSettings(pydantic.BaseModel):
     weight: float = 1.0
@@ -135,6 +165,21 @@ class RotationalTransformObjectiveSettings(pydantic.BaseModel):
             )
 
         return term
+
+    def __call__(
+        self, equilibrium: desc_equilibrium.Equilibrium, goal: float
+    ) -> desc_objectives.RotationalTransform:
+        if self.target_kind == "target":
+            target, bounds = goal, None
+        else:
+            target, bounds = None, (0, goal)
+        return desc_objectives.RotationalTransform(
+            eq=equilibrium,
+            target=target,
+            bounds=bounds,
+            weight=self.weight,  # type: ignore
+            name=self.name,
+        )
 
 
 class OmnigenityObjeciveSettings(pydantic.BaseModel):
@@ -171,6 +216,28 @@ class OmnigenityObjeciveSettings(pydantic.BaseModel):
 
         return term
 
+    def __call__(
+        self,
+        equilibrium: desc_equilibrium.Equilibrium,
+        field: desc_magnetic_fields.OmnigenousField,
+    ) -> desc_objectives.Omnigenity:
+        # Only compute grid once per `__call__`, instead of per nested function
+        eq_lcfs_grid = desc_grid.LinearGrid(
+            rho=self.eq_lcfs_grid_rho,  # type: ignore
+            M=self.eq_lcfs_grid_M_factor * equilibrium.M,
+            N=self.eq_lcfs_grid_N_factor * equilibrium.N,
+            NFP=equilibrium.NFP,
+            sym=False,  # TODO(scadena): revise assumption from tutorial
+        )
+        return desc_objectives.Omnigenity(
+            eq=equilibrium,
+            field=field,
+            field_fixed=True,
+            eq_grid=eq_lcfs_grid,
+            weight=self.weight,  # type: ignore
+            name=self.name,
+        )
+
 
 class DescObjectiveFunctionSettings(pydantic.BaseModel):
     aspect_ratio_settings: AspectRatioObjectiveSettings | None = (
@@ -196,31 +263,23 @@ class DescObjectiveFunctionSettings(pydantic.BaseModel):
     ) -> desc_objectives.ObjectiveFunction:
         """Get the objective function from the settings."""
         terms = []
-        if self.aspect_ratio_settings is not None and aspect_ratio is not None:
-            terms.append(
-                self.aspect_ratio_settings.create_term()(equilibrium, goal=aspect_ratio)
-            )
-        if self.elongation_settings is not None and elongation is not None:
-            terms.append(
-                self.elongation_settings.create_term()(equilibrium, goal=elongation)
-            )
-        if (
-            self.rotational_transform_settings is not None
-            and rotational_transform is not None
-        ):  # noqa: E501
-            terms.append(
-                self.rotational_transform_settings.create_term()(
-                    equilibrium,
-                    goal=-rotational_transform,  # Change sign due to DESC convention # noqa: E501
-                )
-            )
-        if self.omnigenity_settings is not None:
-            terms.append(
-                self.omnigenity_settings.create_term()(equilibrium, field=field)
-            )
+        aspect_set = self.aspect_ratio_settings
+        if aspect_set is not None and aspect_ratio is not None:
+            terms.append(aspect_set(equilibrium, aspect_ratio))
+        elong_set = self.elongation_settings
+        if elong_set is not None and elongation is not None:
+            terms.append(elong_set(equilibrium, elongation))
+        rot_set = self.rotational_transform_settings
+        if rot_set is not None and rotational_transform is not None:
+            # Change sign due to DESC convention
+            terms.append(rot_set(equilibrium, -rotational_transform))
+        omni_set = self.omnigenity_settings
+        if omni_set is not None:
+            terms.append(omni_set(equilibrium, field))
 
         objective = desc_objectives.ObjectiveFunction(objectives=terms)
-        objective.build()
+        if terms:  # Only build if we have terms
+            objective.build()
         return objective
 
 
