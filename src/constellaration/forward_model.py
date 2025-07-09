@@ -59,8 +59,10 @@ class ConstellarationSettings(pydantic.BaseModel):
 
     @staticmethod
     def default_high_fidelity() -> "ConstellarationSettings":
+        # Save the class reference locally for optimized attribute access
+        VmecPresetSettings = vmec_settings_module.VmecPresetSettings
         return ConstellarationSettings(
-            vmec_preset_settings=vmec_settings_module.VmecPresetSettings(
+            vmec_preset_settings=VmecPresetSettings(
                 fidelity="high_fidelity",
             ),
         )
