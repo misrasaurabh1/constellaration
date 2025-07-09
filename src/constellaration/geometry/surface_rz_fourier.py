@@ -6,7 +6,7 @@ from simsopt import geo
 from typing_extensions import Self
 from vmecpp import _pydantic_numpy as pydantic_numpy
 
-from constellaration.geometry import surface_utils
+from constellaration.geometry import surface_rz_fourier, surface_utils
 
 FourierCoefficients = jt.Float[np.ndarray, "n_poloidal_modes n_toroidal_modes"]
 FourierModes = jt.Int[np.ndarray, "n_poloidal_modes n_toroidal_modes"]
@@ -366,17 +366,21 @@ def evaluate_points_rz(
         The R and Z coordinates of the surface at the given theta and phi coordinates.
         The last dimension indexes R and Z.
     """
-    angle = _compute_angle(surface, theta_phi)
+    angle = surface_rz_fourier._compute_angle(surface, theta_phi)
     cos_angle = np.cos(angle)
     sin_angle = np.sin(angle)
-    # r_cos is (n_poloidal_modes, n_toroidal_modes)
-    r = np.sum(surface.r_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
-    z = np.sum(surface.z_sin[np.newaxis, :, :] * sin_angle, axis=(-1, -2))
+
+    # Instead of np.sum(surface.r_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
+    # use einsum to sum over the Fourier modes faster and cleaner.
+    # Both r_cos and angle have (n_poloidal_modes, n_toroidal_modes) as trailing dims.
+    r = np.einsum("...mn,mn->...", cos_angle, surface.r_cos)
+    z = np.einsum("...mn,mn->...", sin_angle, surface.z_sin)
     if not surface.is_stellarator_symmetric:
         assert surface.r_sin is not None
         assert surface.z_cos is not None
-        r += np.sum(surface.r_sin[np.newaxis, :, :] * sin_angle, axis=(-1, -2))
-        z += np.sum(surface.z_cos[np.newaxis, :, :] * cos_angle, axis=(-1, -2))
+        r += np.einsum("...mn,mn->...", sin_angle, surface.r_sin)
+        z += np.einsum("...mn,mn->...", cos_angle, surface.z_cos)
+    # np.stack is unavoidable, but we may skip allocation using a view if desired—but keep as is.
     return np.stack((r, z), axis=-1)
 
 

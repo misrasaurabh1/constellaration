@@ -22,11 +22,12 @@ def make_theta_phi_grid(
         theta_phi: A grid of theta and phi angles.
     """
 
+    # Instead of meshgrid+stack, use np.empty and fill in directly for less memory
     thetas = np.linspace(0, 2 * np.pi, n_theta, endpoint=include_endpoints)
     phis = np.linspace(0, phi_upper_bound, n_phi, endpoint=include_endpoints)
-    thetas_grid, phis_grid = np.meshgrid(thetas, phis, indexing="ij")
-    theta_phi = np.stack([thetas_grid, phis_grid], axis=-1)
-
+    theta_phi = np.empty((n_theta, n_phi, 2), dtype=thetas.dtype)
+    theta_phi[..., 0] = thetas[:, None]
+    theta_phi[..., 1] = phis[None, :]
     return theta_phi
 
 
