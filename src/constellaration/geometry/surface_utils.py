@@ -35,7 +35,7 @@ def energy_spectrum_scaling(
     toroidal_modes: jt.Float[np.ndarray, " n_modes"],
     energy_scale: float,
 ) -> jt.Float[np.ndarray, " n_modes"]:
-    r"""Compute a scale for SurfaceRZFourier Fourier coefficients based on the `energy`
+    """Compute a scale for SurfaceRZFourier Fourier coefficients based on the `energy`
     of the modes.
 
     The spectrum scaling is computed as:
@@ -47,8 +47,11 @@ def energy_spectrum_scaling(
     where `energy_scale` is a constant that determines the scaling of the Fourier
     spectrum.
     """
-    energy = poloidal_modes**2 + toroidal_modes**2
-    return 10 ** (-np.sqrt(energy) / energy_scale)
+
+    # Combine operations to avoid temporary arrays and use log trick
+    energy = np.add(np.square(poloidal_modes), np.square(toroidal_modes))
+    coef = -np.log(10.0) / energy_scale
+    return np.exp(np.sqrt(energy) * coef)
 
 
 def n_poloidal_toroidal_points_to_satisfy_nyquist_criterion(
