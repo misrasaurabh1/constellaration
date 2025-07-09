@@ -2,6 +2,7 @@ import jaxtyping as jt
 import numpy as np
 import pydantic
 from scipy import interpolate
+from scipy.interpolate import InterpolatedUnivariateSpline
 from typing_extensions import Self
 
 
@@ -137,18 +138,22 @@ def _get_profiles_onto_common_rho_grid(
     profile: InterpolatedRadialProfile,
     other_profile: InterpolatedRadialProfile,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # Use np.union1d, which is already fast for small/medium arrays
     common_rho = np.union1d(profile.rho, other_profile.rho)
-    spline_order_self = min(3, len(profile.rho) - 1)
-    # ext=1 means values outside the range of rho are zero!
-    values = np.asarray(
-        interpolate.InterpolatedUnivariateSpline(
-            x=profile.rho, y=profile.values, ext=1, k=spline_order_self
-        )(common_rho)
-    )
-    spline_order_other = min(3, len(other_profile.rho) - 1)
-    values_other = np.asarray(
-        interpolate.InterpolatedUnivariateSpline(
-            x=other_profile.rho, y=other_profile.values, ext=1, k=spline_order_other
-        )(common_rho)
+    values = _interpolate_profile(profile.rho, profile.values, common_rho)
+    values_other = _interpolate_profile(
+        other_profile.rho, other_profile.values, common_rho
     )
     return common_rho, values, values_other
+
+
+def _interpolate_profile(rho, values, target_rho):
+    # Helper: Fast interpolation for len(rho)==2; else use spline with correct ext=1 behavior
+    if len(rho) == 2:
+        # Linear interpolation, left/right fill with 0 (mimic ext=1)
+        result = np.interp(target_rho, rho, values, left=0.0, right=0.0)
+    else:
+        spline_order = min(3, len(rho) - 1)
+        spline = InterpolatedUnivariateSpline(rho, values, k=spline_order, ext=1)
+        result = spline(target_rho)
+    return result
