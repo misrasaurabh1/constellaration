@@ -91,12 +91,13 @@ def make_s_theta_phi_grid(
         include_endpoints: Whether to include the endpoints in the poloidal and
             toroidal dimensions of the grid.
     """
+    # Precompute endpoints and scaling
     s = np.linspace(0, 1, n_radial_points, endpoint=True)
-    theta = (
-        np.linspace(0, 1.0, n_poloidal_points, endpoint=include_endpoints) * 2 * np.pi
+    two_pi = 2.0 * np.pi
+    theta = np.linspace(0.0, two_pi, n_poloidal_points, endpoint=include_endpoints)
+    phi = np.linspace(
+        0.0, phi_upper_bound, n_toroidal_points, endpoint=include_endpoints
     )
-    phi = (
-        np.linspace(0, 1.0, n_toroidal_points, endpoint=include_endpoints)
-        * phi_upper_bound
-    )
-    return np.stack(np.meshgrid(s, theta, phi, indexing="ij"), axis=-1)
+    # meshgrid with sparse option saves memory with large grids
+    S, T, P = np.meshgrid(s, theta, phi, indexing="ij", sparse=False)
+    return np.stack((S, T, P), axis=-1)
