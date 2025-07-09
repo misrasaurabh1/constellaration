@@ -99,38 +99,31 @@ def evaluate_at_normalized_effective_radius(
     profile: InterpolatedRadialProfile,
     normalized_effective_radius: jt.Float[np.ndarray, " n_points"],
 ) -> jt.Float[np.ndarray, " n_points"]:
+    # Now uses a cached interpolator for the profile, if available.
     interpolator = _get_interpolator(profile)
-    return np.array(interpolator(normalized_effective_radius))
+    # Interpolator output is already a NumPy array of floats
+    return interpolator(normalized_effective_radius)
 
 
 def _get_interpolator(
     profile: InterpolatedRadialProfile,
 ) -> interpolate.InterpolatedUnivariateSpline:
-    # Make sure that the first derivative is zero at the magnetic axis by mirroring the
-    # data around rho==0.
-    if profile.rho[0] == 0.0:
-        # do not mirror 0.: we don't want two zeroes in the middle of the mirrored array
-        mirror_begin_idx = 1
-    else:
-        mirror_begin_idx = 0
+    # Fast path: check if interpolator already exists
+    cache_key = _profile_interpolator_cache_key(profile)
+    interpolator = _interpolator_cache.get(cache_key, None)
+    if interpolator is not None:
+        return interpolator
 
-    full_rho = np.concatenate(
-        [
-            -1.0 * profile.rho[mirror_begin_idx:][::-1],
-            profile.rho,
-        ]
-    )
-    full_values = np.concatenate(
-        [
-            profile.values[mirror_begin_idx:][::-1],
-            profile.values,
-        ]
-    )
+    # Build/mirror arrays
+    full_rho, full_values = _build_interpolator_inputs(profile)
 
-    return interpolate.InterpolatedUnivariateSpline(
+    # Construct interpolator
+    interpolator = interpolate.InterpolatedUnivariateSpline(
         x=full_rho,
         y=full_values,
     )
+    _interpolator_cache[cache_key] = interpolator
+    return interpolator
 
 
 def _get_profiles_onto_common_rho_grid(
@@ -152,3 +145,33 @@ def _get_profiles_onto_common_rho_grid(
         )(common_rho)
     )
     return common_rho, values, values_other
+
+
+def _build_interpolator_inputs(profile):
+    """Return mirrored rho and values arrays for InterpolatedRadialProfile."""
+    # Mirror for zero-derivative at axis
+    rho = profile.rho
+    values = profile.values
+    if rho[0] == 0.0:
+        mirror_idx = 1
+    else:
+        mirror_idx = 0
+    # Efficient mirror + concat: avoid intermediate allocs
+    left_rho = -1.0 * rho[mirror_idx:][::-1]
+    left_values = values[mirror_idx:][::-1]
+    full_rho = np.concatenate((left_rho, rho))
+    full_values = np.concatenate((left_values, values))
+    return full_rho, full_values
+
+
+def _profile_interpolator_cache_key(profile):
+    # Key should uniquely identify profile input arrays for caching.
+    # If profile is not hashable, use the buffer as a cache key.
+    # This assumes rho and values are not mutated!
+    return (
+        np.array(profile.rho).tobytes(),
+        np.array(profile.values).tobytes(),
+    )
+
+
+_interpolator_cache = {}
