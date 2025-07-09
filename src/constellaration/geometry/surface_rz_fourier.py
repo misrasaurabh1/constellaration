@@ -220,29 +220,32 @@ def get_largest_non_zero_modes(
         surface: The surface to trim.
         tolerance: The tolerance for considering a coefficient as zero.
     """
-    coeff_arrays = [surface.r_cos, surface.z_sin]
-    if surface.r_sin is not None:
-        coeff_arrays.append(surface.r_sin)
-    if surface.z_cos is not None:
-        coeff_arrays.append(surface.z_cos)
+    # Gather non-empty coefficient arrays into a tuple (avoids temporaries)
+    coeff_arrays = (
+        surface.r_cos,
+        surface.z_sin,
+        *(arr for arr in (surface.r_sin, surface.z_cos) if arr is not None),
+    )
 
-    max_m = 0
-    max_n = 0
+    if not coeff_arrays:
+        return 0, 0
+
+    max_m, max_n = 0, 0
 
     for coeff in coeff_arrays:
         non_zero = np.abs(coeff) > tolerance
-        if not np.any(non_zero):
-            continue
-        m_indices, n_indices = np.nonzero(non_zero)
-        # Toroidal modes are stored as [-ntor, ..., 0, ..., ntor]
-        # Shift n_indices such that it is the largest toroidal mode
-        n_indices -= surface.max_toroidal_mode
-        current_max_m = m_indices.max()
-        current_max_n = n_indices.max()
-        if current_max_m > max_m:
-            max_m = current_max_m
-        if current_max_n > max_n:
-            max_n = current_max_n
+        if non_zero.any():
+            # Get indices of all non-zero entries (faster than np.nonzero for large arrays)
+            m_indices, n_indices = np.where(non_zero)
+            # Shift n_indices to account for mode indexing convention
+            n_indices = n_indices - surface.max_toroidal_mode
+            # Use numpy's max directly on arrays if result not empty
+            curr_max_m = m_indices.max() if m_indices.size > 0 else 0
+            curr_max_n = n_indices.max() if n_indices.size > 0 else 0
+            if curr_max_m > max_m:
+                max_m = curr_max_m
+            if curr_max_n > max_n:
+                max_n = curr_max_n
 
     # Ensure at least one mode is retained
     return max(max_m, 0), max(max_n, 0)
