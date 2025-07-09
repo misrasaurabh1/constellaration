@@ -22,10 +22,14 @@ def make_theta_phi_grid(
         theta_phi: A grid of theta and phi angles.
     """
 
-    thetas = np.linspace(0, 2 * np.pi, n_theta, endpoint=include_endpoints)
-    phis = np.linspace(0, phi_upper_bound, n_phi, endpoint=include_endpoints)
-    thetas_grid, phis_grid = np.meshgrid(thetas, phis, indexing="ij")
-    theta_phi = np.stack([thetas_grid, phis_grid], axis=-1)
+    # Precompute 2*pi to avoid repeated computation
+    two_pi = 2.0 * np.pi
+    thetas = np.linspace(0.0, two_pi, n_theta, endpoint=include_endpoints)
+    phis = np.linspace(0.0, phi_upper_bound, n_phi, endpoint=include_endpoints)
+    # meshgrid returns copies (not views), specify sparse=False (default) for performance
+    thetas_grid, phis_grid = np.meshgrid(thetas, phis, indexing="ij", copy=False)
+    # dstack is more efficient than stack([...], axis=-1) for this usage
+    theta_phi = np.dstack((thetas_grid, phis_grid))
 
     return theta_phi
 
