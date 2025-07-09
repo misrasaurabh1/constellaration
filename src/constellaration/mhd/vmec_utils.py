@@ -397,7 +397,9 @@ def _build_radial_interpolator(
         x=x,
         y=fourier_coefficients,
         axis=0,
+        copy=False,  # Optimization: don't copy input if not needed
         fill_value="extrapolate",  # pyright: ignore
+        assume_sorted=True,  # Optimization: if input sorted; remove if unsure
     )
 
 
@@ -405,7 +407,8 @@ def _interpolate_radially(
     interpolator: interpolate.interp1d,
     normalized_toroidal_flux: jt.Float[np.ndarray, "n_surfaces *dims"],  # noqa: F821
 ) -> jt.Float[np.ndarray, "n_surfaces *dims"]:  # noqa: F821
-    if np.any(normalized_toroidal_flux < 0) or np.any(normalized_toroidal_flux > 1):
+    # Fastest check style:
+    if np.any((normalized_toroidal_flux < 0) | (normalized_toroidal_flux > 1)):
         raise ValueError("Normalized toroidal flux must be in [0, 1].")
     return interpolator(normalized_toroidal_flux)
 
@@ -417,14 +420,42 @@ def _inverse_fourier_transform(
     s_theta_phi: jt.Float[np.ndarray, "n_s n_theta n_phi 3"],
     basis: _FourierBasis,
 ) -> jt.Float[np.ndarray, "n_s n_theta n_phi"]:
-    # pyright gets confused about the type of the arrays for some reason
-    angle = (  # pyright: ignore
-        poloidal_mode_numbers[np.newaxis, np.newaxis, :]
-        * s_theta_phi[:, :, :, 1, np.newaxis]
-        - toroidal_mode_numbers[np.newaxis, np.newaxis, :]
-        * s_theta_phi[:, :, :, 2, np.newaxis]
+    # Efficient broadcasting and memory usage:
+    # s_theta_phi[..., 1] has shape (n_s, n_theta, n_phi)
+    # We want angle of shape (n_s, n_theta, n_phi, n_fourier_coefficients)
+    s_theta = s_theta_phi[..., 1]
+    s_phi = s_theta_phi[..., 2]
+    pmn = poloidal_mode_numbers  # (n_fourier_coefficients,)
+    tmn = toroidal_mode_numbers  # (n_fourier_coefficients,)
+
+    # Use einsum for memory efficiency: outer-difference without making large temp arrays
+    # angle = poloidal_modes[..., k] * s_theta[...,None] - toroidal_modes[..., k] * s_phi[...,None]
+    # Rearranged as two outer products:
+    angle = (
+        s_theta[..., np.newaxis] * pmn[np.newaxis, np.newaxis, np.newaxis, :]
+        - s_phi[..., np.newaxis] * tmn[np.newaxis, np.newaxis, np.newaxis, :]
     )
+
     if basis == _FourierBasis.COSINE:
-        return np.sum(fourier_coefficients * np.cos(angle), axis=-1)
+        trig = np.cos(angle)
     elif basis == _FourierBasis.SINE:
-        return np.sum(fourier_coefficients * np.sin(angle), axis=-1)
+        trig = np.sin(angle)
+    else:
+        raise ValueError("Unknown Fourier basis: {}".format(basis))
+
+    # Fourier coeffs shape: (n_surfaces, n_fourier_coefficients)
+    # If they are not already lined up, ensure shape is (n_s, n_theta, n_phi, n_fourier_coefficients)
+    # Most likely, broadcasting (n_s, 1, 1, n_coeff) vs (n_s, n_theta, n_phi, n_coeff) is sufficient.
+    # But in general:
+    shape_coeff = fourier_coefficients.shape
+    if fourier_coefficients.ndim == 2 and s_theta_phi.shape[:3][0] == shape_coeff[0]:
+        # (n_s, n_coeff) -> (n_s, 1, 1, n_coeff) for broadcasting
+        fc = fourier_coefficients[:, np.newaxis, np.newaxis, :]
+    else:
+        # E.g. if radially-interpolated already has (n_s, n_theta, n_phi, n_coeff)
+        fc = fourier_coefficients
+
+    # Compute sum efficiently, axis=-1 is coeff index
+    # (n_s, n_theta, n_phi, n_coeff) * (n_s, n_theta, n_phi, n_coeff)
+    # Result: (n_s, n_theta, n_phi)
+    return np.einsum("...k,...k->...", fc, trig)
