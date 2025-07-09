@@ -138,9 +138,7 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
 
     _average_triangularity_upper_bound: float = -0.5
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.3
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.3
 
     _does_it_require_qi: bool = False
 
@@ -159,22 +157,42 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
     def _normalized_constraint_violations(
         self, metrics: forward_model.ConstellarationMetrics
     ) -> np.ndarray:
-        constraint_targets = np.array(
+        # Localize top-level attributes for speed
+        targets = self._get_constraint_targets_arr()
+        ar_ub = targets[0]
+        tri_ub = targets[1]
+        rot_lb = targets[2]
+        # Localize values from metrics only once
+        m_ar = metrics.aspect_ratio
+        m_tri = metrics.average_triangularity
+        m_rot = metrics.edge_rotational_transform_over_n_field_periods
+        # Direct calculation: array ops, no Python list
+        violations = np.array(
             [
-                self._aspect_ratio_upper_bound,
-                self._average_triangularity_upper_bound,
-                self._edge_rotational_transform_over_n_field_periods_lower_bound,
-            ]
+                m_ar - ar_ub,
+                m_tri - tri_ub,
+                rot_lb - m_rot,
+            ],
+            dtype=np.float64,
         )
-        constraint_violations = np.array(
-            [
-                metrics.aspect_ratio - self._aspect_ratio_upper_bound,
-                metrics.average_triangularity - self._average_triangularity_upper_bound,
-                self._edge_rotational_transform_over_n_field_periods_lower_bound
-                - metrics.edge_rotational_transform_over_n_field_periods,
-            ]
-        )
-        return constraint_violations / np.abs(constraint_targets)
+        return violations / np.abs(targets)
+
+    # Helper to cache static constraint target array
+    def _get_constraint_targets_arr(self):
+        # As all constraint targets are scalars, cache as a small float64 numpy array
+        try:
+            return self.__constraint_targets_arr
+        except AttributeError:
+            arr = np.array(
+                [
+                    self._aspect_ratio_upper_bound,
+                    self._average_triangularity_upper_bound,
+                    self._edge_rotational_transform_over_n_field_periods_lower_bound,
+                ],
+                dtype=np.float64,
+            )
+            self.__constraint_targets_arr = arr
+            return arr
 
 
 class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
@@ -213,9 +231,7 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
 
     _aspect_ratio_upper_bound: pydantic.PositiveFloat = 10.0
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -4.0
 
@@ -301,17 +317,13 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
         vacuum_well_lower_bound: Minimum required vacuum well.
     """
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -3.5
 
     _edge_magnetic_mirror_ratio_upper_bound: pydantic.PositiveFloat = 0.25
 
-    _flux_compression_in_regions_of_bad_curvature_upper_bound: (
-        pydantic.PositiveFloat
-    ) = 0.9
+    _flux_compression_in_regions_of_bad_curvature_upper_bound: pydantic.PositiveFloat = 0.9
 
     _vacuum_well_lower_bound: pydantic.NonNegativeFloat = 0.0
 
