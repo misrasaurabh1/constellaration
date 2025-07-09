@@ -405,7 +405,8 @@ def _interpolate_radially(
     interpolator: interpolate.interp1d,
     normalized_toroidal_flux: jt.Float[np.ndarray, "n_surfaces *dims"],  # noqa: F821
 ) -> jt.Float[np.ndarray, "n_surfaces *dims"]:  # noqa: F821
-    if np.any(normalized_toroidal_flux < 0) or np.any(normalized_toroidal_flux > 1):
+    # Combined both bounds check using logical_or for a faster pass over the input.
+    if np.any((normalized_toroidal_flux < 0) | (normalized_toroidal_flux > 1)):
         raise ValueError("Normalized toroidal flux must be in [0, 1].")
     return interpolator(normalized_toroidal_flux)
 
