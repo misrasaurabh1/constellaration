@@ -263,10 +263,9 @@ def evaluate_minor_radius(
         n_phi: Number of quadrature points in the phi dimension of the surface,
             used for the numerical integration.
     """
-    return np.sqrt(
-        compute_mean_cross_sectional_area(surface=surface, n_theta=n_theta, n_phi=n_phi)
-        / np.pi
-    )
+    # Call directly: no need for pydantic type
+    mean_area = compute_mean_cross_sectional_area(surface, n_theta, n_phi)
+    return np.sqrt(mean_area / np.pi)
 
 
 def compute_mean_cross_sectional_area(
@@ -293,36 +292,35 @@ def compute_mean_cross_sectional_area(
         n_phi: Number of quadrature points in the phi dimension of the surface,
             used for the numerical integration.
     """
-    # n_theta - 1, n_phi - 1 is to make sure this calculation is equivalent to using
-    # Simsopt
     theta_phi_grid = surface_utils.make_theta_phi_grid(
         n_theta - 1, n_phi - 1, phi_upper_bound=2 * np.pi, include_endpoints=False
     )
+
     xyz = evaluate_points_xyz(surface, theta_phi_grid)
-    x2y2 = xyz[:, :, 0] ** 2 + xyz[:, :, 1] ** 2
-    dgamma1 = evaluate_dxyz_dphi(surface, theta_phi_grid) * 2 * np.pi
-    dgamma2 = evaluate_dxyz_dtheta(surface, theta_phi_grid) * 2 * np.pi
+    x = xyz[:, :, 0]
+    y = xyz[:, :, 1]
+    x2y2 = x**2 + y**2
 
-    # compute the average cross sectional area
-    J = np.zeros((xyz.shape[0], xyz.shape[1], 2, 2))
-    J[:, :, 0, 0] = (
-        xyz[:, :, 0] * dgamma1[:, :, 1] - xyz[:, :, 1] * dgamma1[:, :, 0]
-    ) / x2y2
-    J[:, :, 0, 1] = (
-        xyz[:, :, 0] * dgamma2[:, :, 1] - xyz[:, :, 1] * dgamma2[:, :, 0]
-    ) / x2y2
-    J[:, :, 1, 0] = 0.0
-    J[:, :, 1, 1] = 1.0
+    dgamma1 = evaluate_dxyz_dphi(surface, theta_phi_grid) * (2 * np.pi)
+    dgamma2 = evaluate_dxyz_dtheta(surface, theta_phi_grid) * (2 * np.pi)
 
-    detJ = np.linalg.det(J)
-    Jinv = np.linalg.inv(J)
+    # Compute J entries directly, avoid allocating 4D arrays
+    # J = [[J00, J01], [0, 1]]
+    J00 = (x * dgamma1[:, :, 1] - y * dgamma1[:, :, 0]) / x2y2
+    J01 = (x * dgamma2[:, :, 1] - y * dgamma2[:, :, 0]) / x2y2
 
-    dZ_dtheta = (
-        dgamma1[:, :, 2] * Jinv[:, :, 0, 1] + dgamma2[:, :, 2] * Jinv[:, :, 1, 1]
-    )
-    mean_cross_sectional_area = np.abs(np.mean(np.sqrt(x2y2) * dZ_dtheta * detJ)) / (
-        2 * np.pi
-    )
+    # Determinant and inverse for [a b; 0 1]: det = a, inv = [1/a -b/a; 0 1]
+    detJ = J00
+    with np.errstate(divide="ignore", invalid="ignore"):
+        J00inv = np.where(J00 != 0, 1.0 / J00, 0.0)
+        J01inv = np.where(J00 != 0, -J01 / J00, 0.0)
+
+    # dZ/dtheta = dgamma1[:,:,2] * Jinv[0,1] + dgamma2[:,:,2] * Jinv[1,1]
+    dZ_dtheta = dgamma1[:, :, 2] * J01inv + dgamma2[:, :, 2] * 1.0
+
+    # Combine in-place, vectorized
+    factor = np.sqrt(x2y2) * dZ_dtheta * detJ
+    mean_cross_sectional_area = np.abs(np.mean(factor)) / (2 * np.pi)
     return mean_cross_sectional_area
 
 
