@@ -22,16 +22,19 @@ class FluxPowerSeriesProfile(pydantic.BaseModel):
 def evaluate_derivative(
     profile: FluxPowerSeriesProfile,
 ) -> FluxPowerSeriesProfile:
-    return _evaluate_nth_derivative(profile, n=1)
+    # Fast path: n=1 is common, use a tight loop
+    coefficients = profile.coefficients
+    if not coefficients or len(coefficients) < 2:
+        return FluxPowerSeriesProfile(coefficients=[])
+    deriv_coeff = [coefficients[i] * i for i in range(1, len(coefficients))]
+    return FluxPowerSeriesProfile(coefficients=deriv_coeff)
 
 
 def evaluate_at_normalized_effective_radius(
     profile: FluxPowerSeriesProfile,
     normalized_effective_radius: jt.Float[NpOrJaxArray, " n_points"],
 ) -> jt.Float[NpOrJaxArray, " n_points"]:
-    return evaluate_at_normalized_toroidal_flux(
-        profile, normalized_effective_radius**2
-    )
+    return evaluate_at_normalized_toroidal_flux(profile, normalized_effective_radius**2)
 
 
 def evaluate_at_normalized_toroidal_flux(
