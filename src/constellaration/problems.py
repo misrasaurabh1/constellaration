@@ -138,9 +138,7 @@ class GeometricalProblem(SingleObjectiveProblem, pydantic.BaseModel):
 
     _average_triangularity_upper_bound: float = -0.5
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.3
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.3
 
     _does_it_require_qi: bool = False
 
@@ -213,9 +211,7 @@ class SimpleToBuildQIStellarator(SingleObjectiveProblem, pydantic.BaseModel):
 
     _aspect_ratio_upper_bound: pydantic.PositiveFloat = 10.0
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -4.0
 
@@ -301,17 +297,13 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
         vacuum_well_lower_bound: Minimum required vacuum well.
     """
 
-    _edge_rotational_transform_over_n_field_periods_lower_bound: (
-        pydantic.PositiveFloat
-    ) = 0.25
+    _edge_rotational_transform_over_n_field_periods_lower_bound: pydantic.PositiveFloat = 0.25
 
     _log10_qi_upper_bound: pydantic.NegativeFloat = -3.5
 
     _edge_magnetic_mirror_ratio_upper_bound: pydantic.PositiveFloat = 0.25
 
-    _flux_compression_in_regions_of_bad_curvature_upper_bound: (
-        pydantic.PositiveFloat
-    ) = 0.9
+    _flux_compression_in_regions_of_bad_curvature_upper_bound: pydantic.PositiveFloat = 0.9
 
     _vacuum_well_lower_bound: pydantic.NonNegativeFloat = 0.0
 
@@ -376,30 +368,49 @@ class MHDStableQIStellarator(MultiObjectiveProblem, pydantic.BaseModel):
     def _normalized_constraint_violations(
         self, metrics: forward_model.ConstellarationMetrics
     ) -> np.ndarray:
-        assert metrics.qi is not None
-        assert metrics.flux_compression_in_regions_of_bad_curvature is not None
-        constraint_violations = np.array(
+        # Pre-load all needed attributes into local variables for faster access
+        ert_nfp_lb = self._edge_rotational_transform_over_n_field_periods_lower_bound
+        log10_qi_ub = self._log10_qi_upper_bound
+        emmratio_ub = self._edge_magnetic_mirror_ratio_upper_bound
+        flux_compr_ub = self._flux_compression_in_regions_of_bad_curvature_upper_bound
+        vacuum_well_lb = self._vacuum_well_lower_bound
+
+        qi = metrics.qi
+        fcibc = metrics.flux_compression_in_regions_of_bad_curvature
+        ert_nfp = metrics.edge_rotational_transform_over_n_field_periods
+        emmratio = metrics.edge_magnetic_mirror_ratio
+        vacuum_well = metrics.vacuum_well
+
+        assert qi is not None
+        assert fcibc is not None
+
+        # Inline all constraint calculations, avoid list constructions
+        cv0 = ert_nfp_lb - ert_nfp
+        cv1 = np.log10(qi) - log10_qi_ub
+        cv2 = emmratio - emmratio_ub
+        cv3 = fcibc - flux_compr_ub
+        cv4 = vacuum_well_lb - vacuum_well
+
+        # Constraint targets, with manual maximum for last entry
+        t4 = vacuum_well_lb
+        if t4 < 0.1:
+            t4 = 0.1
+
+        # Manual absolute value for small lists is slightly faster
+        targets = np.array(
             [
-                self._edge_rotational_transform_over_n_field_periods_lower_bound
-                - metrics.edge_rotational_transform_over_n_field_periods,
-                np.log10(metrics.qi) - self._log10_qi_upper_bound,
-                metrics.edge_magnetic_mirror_ratio
-                - self._edge_magnetic_mirror_ratio_upper_bound,
-                metrics.flux_compression_in_regions_of_bad_curvature
-                - self._flux_compression_in_regions_of_bad_curvature_upper_bound,
-                self._vacuum_well_lower_bound - metrics.vacuum_well,
+                abs(ert_nfp_lb),
+                abs(log10_qi_ub),
+                abs(emmratio_ub),
+                abs(flux_compr_ub),
+                abs(t4),
             ]
         )
-        constraint_targets = np.array(
-            [
-                self._edge_rotational_transform_over_n_field_periods_lower_bound,
-                self._log10_qi_upper_bound,
-                self._edge_magnetic_mirror_ratio_upper_bound,
-                self._flux_compression_in_regions_of_bad_curvature_upper_bound,
-                np.maximum(1e-1, self._vacuum_well_lower_bound),
-            ]
-        )
-        return constraint_violations / np.abs(constraint_targets)
+
+        violations = np.array([cv0, cv1, cv2, cv3, cv4])
+        # Use inplace division to avoid allocating new arrays
+        violations /= targets
+        return violations
 
 
 def _hypervolume(
