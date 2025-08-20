@@ -335,11 +335,15 @@ def boozer_settings_from_equilibrium_resolution(
             transformation to Boozer coordinates will be run on all flux surfaces.
         verbose: If True, running booz_xform in verbose mode.
     """
-    mpol = max(6 * mhd_equilibrium.mpol, 2)
-    ntor = max(2 * mhd_equilibrium.ntor - 1, 0)
+    mpol = mhd_equilibrium.mpol
+    ntor = mhd_equilibrium.ntor
+
+    n_poloidal_modes = max(2, 6 * mpol)
+    max_toroidal_mode = max(0, 2 * ntor - 1)
+
     return BoozerSettings(
         normalized_toroidal_flux=normalized_toroidal_flux,
-        n_poloidal_modes=mpol,
-        max_toroidal_mode=ntor,
+        n_poloidal_modes=n_poloidal_modes,
+        max_toroidal_mode=max_toroidal_mode,
         verbose=verbose,
     )
